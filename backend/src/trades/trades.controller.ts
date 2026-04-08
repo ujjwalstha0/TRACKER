@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Query } from '@nestjs/common';
 import { CreateTradeDto } from './dto/create-trade.dto';
 import { TradeEntity } from './trade.entity';
 import { TradesService } from './trades.service';
@@ -13,8 +13,15 @@ export class TradesController {
   }
 
   @Get()
-  findAll(): Promise<TradeEntity[]> {
-    return this.tradesService.findAll();
+  findAll(@Query('isBuy') isBuy?: string): Promise<TradeEntity[]> {
+    const parsed = typeof isBuy === 'string'
+      ? isBuy.toLowerCase() === 'true'
+        ? true
+        : isBuy.toLowerCase() === 'false'
+          ? false
+          : undefined
+      : undefined;
+    return this.tradesService.findAll(parsed);
   }
 
   @Get(':id')

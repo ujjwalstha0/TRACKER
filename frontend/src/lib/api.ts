@@ -1,4 +1,4 @@
-import { FeeCalculationInput, FeeCalculationResult, TradeRow } from '../types';
+import { FeeCalculationInput, FeeCalculationResult, NepseCostRequest, NepseCostResponse, TradeRow } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? '/api';
 
@@ -35,5 +35,27 @@ export async function createTrade(payload: Record<string, unknown>): Promise<Tra
     throw new Error('Failed to save trade');
   }
 
+  return res.json();
+}
+
+export async function calculateNepseCost(payload: NepseCostRequest): Promise<NepseCostResponse> {
+  const res = await fetch(`${API_BASE}/calculate-nepse-cost`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    throw new Error('Failed to calculate NEPSE cost');
+  }
+
+  return res.json();
+}
+
+export async function fetchBuyTrades(): Promise<TradeRow[]> {
+  const res = await fetch(`${API_BASE}/trades?isBuy=true`);
+  if (!res.ok) {
+    throw new Error('Failed to load buy trades');
+  }
   return res.json();
 }

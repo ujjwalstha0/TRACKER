@@ -55,8 +55,11 @@ export class TradesService {
     return this.tradesRepository.save(trade);
   }
 
-  findAll(): Promise<TradeEntity[]> {
-    return this.tradesRepository.find({ order: { id: 'DESC' } });
+  findAll(isBuy?: boolean): Promise<TradeEntity[]> {
+    return this.tradesRepository.find({
+      where: typeof isBuy === 'boolean' ? { isBuy } : undefined,
+      order: { id: 'DESC' },
+    });
   }
 
   async findOne(id: number): Promise<TradeEntity> {

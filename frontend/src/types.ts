@@ -64,3 +64,29 @@ export interface WatchlistItem {
   momentum: number;
   catalyst: string;
 }
+
+export interface NepseCostRequest {
+  isBuy: boolean;
+  price: number;
+  qty: number;
+  instrumentType: InstrumentType;
+  buyPrice: number | null;
+  holdingDays: number | null;
+  traderType: EntityType;
+}
+
+export interface NepseCostBreakdownRow {
+  charge: string;
+  rate: number | null;
+  amount: number;
+}
+
+export interface NepseCostResponse {
+  isBuy: boolean;
+  transactionValue: number;
+  totalAmountToPay: number | null;
+  netProceeds: number | null;
+  totalCharges: number;
+  totalDeductions: number;
+  breakdown: NepseCostBreakdownRow[];
+}
