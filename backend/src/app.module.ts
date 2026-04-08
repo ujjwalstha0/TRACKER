@@ -3,7 +3,9 @@ import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import scrapeConfig from './config/scrape.config';
 import { FeesModule } from './fees/fees.module';
+import { IndicatorsModule } from './indicators/indicators.module';
 import { IndicesModule } from './indices/indices.module';
+import { OhlcModule } from './ohlc/ohlc.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ReportsModule } from './reports/reports.module';
 import { ScrapeModule } from './scrape/scrape.module';
@@ -34,6 +36,8 @@ import { WatchlistModule } from './watchlist/watchlist.module';
     TradesModule,
     WatchlistModule,
     IndicesModule,
+    OhlcModule,
+    IndicatorsModule,
     ScrapeModule,
     SimulationModule,
     ReportsModule,

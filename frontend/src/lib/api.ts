@@ -2,8 +2,10 @@ import {
   FeeCalculationInput,
   FeeCalculationResult,
   IndexApiRow,
+  IndicatorsResponse,
   NepseCostRequest,
   NepseCostResponse,
+  OhlcCandle,
   TradeRow,
   WatchlistApiRow,
 } from '../types';
@@ -81,5 +83,35 @@ export async function fetchIndices(): Promise<IndexApiRow[]> {
   if (!res.ok) {
     throw new Error('Failed to load indices');
   }
+  return res.json();
+}
+
+export async function fetchOhlc(symbol: string, interval = '1d', limit = 240): Promise<OhlcCandle[]> {
+  const params = new URLSearchParams({
+    symbol,
+    interval,
+    limit: String(limit),
+  });
+
+  const res = await fetch(`${API_BASE}/ohlc?${params.toString()}`);
+  if (!res.ok) {
+    throw new Error('Failed to load OHLC data');
+  }
+
+  return res.json();
+}
+
+export async function fetchIndicators(symbol: string, interval = '1d', limit = 240): Promise<IndicatorsResponse> {
+  const params = new URLSearchParams({
+    symbol,
+    interval,
+    limit: String(limit),
+  });
+
+  const res = await fetch(`${API_BASE}/indicators?${params.toString()}`);
+  if (!res.ok) {
+    throw new Error('Failed to load indicators');
+  }
+
   return res.json();
 }

@@ -57,6 +57,8 @@ export class NepseScrapeService {
       return;
     }
 
+    const savedAt = new Date();
+
     for (const row of prices) {
       await this.prisma.price.upsert({
         where: { symbol: row.symbol },
@@ -71,7 +73,7 @@ export class NepseScrapeService {
           low: row.low,
           volume: row.volume,
           turnover: row.turnover,
-          savedAt: new Date(),
+          savedAt,
         },
         create: {
           symbol: row.symbol,
@@ -85,6 +87,36 @@ export class NepseScrapeService {
           low: row.low,
           volume: row.volume,
           turnover: row.turnover,
+        },
+      });
+
+      const open = row.open ?? row.ltp;
+      const high = row.high ?? row.ltp;
+      const low = row.low ?? row.ltp;
+      const close = row.ltp;
+
+      await this.prisma.priceCandle.upsert({
+        where: {
+          symbol_t: {
+            symbol: row.symbol,
+            t: savedAt,
+          },
+        },
+        update: {
+          o: open,
+          h: high,
+          l: low,
+          c: close,
+          v: row.volume,
+        },
+        create: {
+          symbol: row.symbol,
+          t: savedAt,
+          o: open,
+          h: high,
+          l: low,
+          c: close,
+          v: row.volume,
         },
       });
     }

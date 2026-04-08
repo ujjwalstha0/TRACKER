@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
-import { calculateNepseCost, fetchBuyTrades } from '../lib/api';
-import { NepseCostResponse, TradeRow } from '../types';
+import { calculateNepseCost, fetchBuyTrades, fetchWatchlist } from '../lib/api';
+import { NepseCostResponse, TradeRow, WatchlistApiRow } from '../types';
 
 interface SimulatorResult {
   target: NepseCostResponse;
@@ -26,8 +26,10 @@ function estimateHoldingDays(purchasedAt: string | null): number {
 
 export function PLSimulator() {
   const [trades, setTrades] = useState<TradeRow[]>([]);
+  const [watchlist, setWatchlist] = useState<WatchlistApiRow[]>([]);
   const [loadingTrades, setLoadingTrades] = useState(false);
   const [selectedTradeId, setSelectedTradeId] = useState<number | null>(null);
+  const [selectedWatchlistSymbol, setSelectedWatchlistSymbol] = useState('');
   const [buyPrice, setBuyPrice] = useState(0);
   const [quantity, setQuantity] = useState(0);
   const [holdingDays, setHoldingDays] = useState(0);
@@ -39,9 +41,15 @@ export function PLSimulator() {
 
   useEffect(() => {
     setLoadingTrades(true);
-    fetchBuyTrades()
-      .then((rows) => setTrades(rows.filter((t) => t.isBuy)))
-      .catch(() => setTrades([]))
+    Promise.all([fetchBuyTrades(), fetchWatchlist()])
+      .then(([tradeRows, watchlistRows]) => {
+        setTrades(tradeRows.filter((t) => t.isBuy));
+        setWatchlist(watchlistRows);
+      })
+      .catch(() => {
+        setTrades([]);
+        setWatchlist([]);
+      })
       .finally(() => setLoadingTrades(false));
   }, []);
 
@@ -58,8 +66,27 @@ export function PLSimulator() {
     setHoldingDays(estimated);
     setTargetPrice(Number((selectedTrade.price * 1.1).toFixed(2)));
     setStopLossPrice(Number((selectedTrade.price * 0.95).toFixed(2)));
+    setSelectedWatchlistSymbol(selectedTrade.symbol);
     setResult(null);
   }, [selectedTrade]);
+
+  const applyWatchlistSymbol = useCallback(
+    (symbol: string) => {
+      setSelectedWatchlistSymbol(symbol);
+      if (!symbol) return;
+
+      const row = watchlist.find((item) => item.symbol === symbol);
+      if (!row) return;
+
+      setSelectedTradeId(null);
+      setBuyPrice(row.ltp);
+      setQuantity((currentQty) => (currentQty > 0 ? currentQty : 100));
+      setTargetPrice(Number((row.ltp * 1.08).toFixed(2)));
+      setStopLossPrice(Number((row.ltp * 0.96).toFixed(2)));
+      setResult(null);
+    },
+    [watchlist],
+  );
 
   const formatMoney = useCallback((value: number) => {
     return `Rs. ${new Intl.NumberFormat('en-IN', {
@@ -228,6 +255,25 @@ export function PLSimulator() {
       <p className="subtle">Pick an existing buy trade, then preview target and stop-loss exits after all charges.</p>
 
       <form className="form-grid" onSubmit={handleSimulate}>
+        <div className="field-group">
+          <label className="label" htmlFor="watchlistCompany">
+            Company Quick Fill
+          </label>
+          <select
+            id="watchlistCompany"
+            value={selectedWatchlistSymbol}
+            onChange={(e) => applyWatchlistSymbol(e.target.value)}
+          >
+            <option value="">Select company from watchlist</option>
+            {watchlist.map((row) => (
+              <option key={row.symbol} value={row.symbol}>
+                {row.symbol} {row.company ? `- ${row.company}` : ''}
+              </option>
+            ))}
+          </select>
+          <small className="subtle">Selecting a company auto-fills buy price, target and stop-loss.</small>
+        </div>
+
         <div className="field-group">
           <label className="label" htmlFor="tradeSelect">
             Select buy trade

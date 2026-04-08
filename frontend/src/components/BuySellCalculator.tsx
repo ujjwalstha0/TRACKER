@@ -34,6 +34,7 @@ export function BuySellCalculator() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [liveSelectedSymbol, setLiveSelectedSymbol] = useState('');
+  const [liveWatchlist, setLiveWatchlist] = useState<WatchlistApiRow[]>([]);
   const [liveIndices, setLiveIndices] = useState<IndexApiRow[]>([]);
   const [liveTopSymbols, setLiveTopSymbols] = useState<WatchlistApiRow[]>([]);
   const [liveUpdatedAt, setLiveUpdatedAt] = useState<Date | null>(null);
@@ -41,6 +42,7 @@ export function BuySellCalculator() {
   const loadLivePulse = useCallback(async () => {
     try {
       const [indicesRows, watchlistRows] = await Promise.all([fetchIndices(), fetchWatchlist()]);
+      setLiveWatchlist(watchlistRows);
 
       const preferredOrder = ['NEPSE Index', 'Banking SubIndex', 'HydroPower Index'];
       const preferred = preferredOrder
@@ -77,6 +79,23 @@ export function BuySellCalculator() {
     }));
     setLiveSelectedSymbol(row.symbol);
   }, []);
+
+  const applySelectedCompany = useCallback(
+    (symbol: string) => {
+      if (!symbol) {
+        setLiveSelectedSymbol('');
+        return;
+      }
+
+      const row = liveWatchlist.find((item) => item.symbol === symbol);
+      if (!row) {
+        return;
+      }
+
+      applyLiveSymbol(row);
+    },
+    [applyLiveSymbol, liveWatchlist],
+  );
 
   const formatMoney = useCallback((value: number) => {
     return `Rs. ${new Intl.NumberFormat('en-IN', {
@@ -268,6 +287,25 @@ export function BuySellCalculator() {
       </section>
 
       <form className="form-grid" onSubmit={handleSubmit}>
+        <div className="field-group">
+          <label className="label" htmlFor="companySelector">
+            Company Quick Fill
+          </label>
+          <select
+            id="companySelector"
+            value={liveSelectedSymbol}
+            onChange={(e) => applySelectedCompany(e.target.value)}
+          >
+            <option value="">Choose company from live watchlist</option>
+            {liveWatchlist.map((row) => (
+              <option key={row.symbol} value={row.symbol}>
+                {row.symbol} {row.company ? `- ${row.company}` : ''}
+              </option>
+            ))}
+          </select>
+          <small className="subtle">Selecting a company auto-fills price and default quantity.</small>
+        </div>
+
         <div className="field-group">
           <label className="label">Transaction side</label>
           <div className="toggle-row">

@@ -60,6 +60,27 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     );
 
     await this.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "prices" (
+        "id" BIGSERIAL PRIMARY KEY,
+        "symbol" VARCHAR(20) NOT NULL,
+        "t" TIMESTAMP(3) NOT NULL,
+        "o" NUMERIC(18,4) NOT NULL,
+        "h" NUMERIC(18,4) NOT NULL,
+        "l" NUMERIC(18,4) NOT NULL,
+        "c" NUMERIC(18,4) NOT NULL,
+        "v" BIGINT
+      );
+    `);
+
+    await this.$executeRawUnsafe(
+      'CREATE UNIQUE INDEX IF NOT EXISTS "prices_symbol_t_key" ON "prices" ("symbol", "t");',
+    );
+    await this.$executeRawUnsafe(
+      'CREATE INDEX IF NOT EXISTS "prices_symbol_t_idx" ON "prices" ("symbol", "t");',
+    );
+    await this.$executeRawUnsafe('CREATE INDEX IF NOT EXISTS "prices_t_idx" ON "prices" ("t");');
+
+    await this.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS "IndexValue" (
         "id" BIGSERIAL PRIMARY KEY,
         "indexName" VARCHAR(80) NOT NULL,

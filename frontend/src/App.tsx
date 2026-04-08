@@ -2,6 +2,7 @@ import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { BuySellCalculator } from './components/BuySellCalculator';
 import { LiveMarketBoard } from './components/LiveMarketBoard';
+import { MarketChartDesk } from './components/MarketChartDesk';
 import { PLSimulator } from './components/PLSimulator';
 
 const THEME_KEY = 'nepse.personal-calculator.theme';
@@ -37,6 +38,9 @@ export default function App() {
           <NavLink to="/live-market" className={({ isActive }) => (isActive ? 'tab active' : 'tab')}>
             Live Market
           </NavLink>
+          <NavLink to="/chart" className={({ isActive }) => (isActive ? 'tab active' : 'tab')}>
+            Chart Desk
+          </NavLink>
           <NavLink to="/pl-simulator" className={({ isActive }) => (isActive ? 'tab active' : 'tab')}>
             P/L Simulator
           </NavLink>
@@ -70,6 +74,10 @@ export default function App() {
             <strong>Decision Discipline</strong>
             <span>Target and stop-loss outcomes before execution.</span>
           </article>
+          <article className="hero-chip">
+            <strong>Chart Intelligence</strong>
+            <span>OHLC candles with trend and momentum indicators.</span>
+          </article>
         </div>
       </section>
 
@@ -77,6 +85,8 @@ export default function App() {
         <Routes>
           <Route path="/" element={<BuySellCalculator />} />
           <Route path="/live-market" element={<LiveMarketBoard />} />
+          <Route path="/chart" element={<MarketChartDesk />} />
+          <Route path="/chart/:symbol" element={<MarketChartDesk />} />
           <Route path="/pl-simulator" element={<PLSimulator />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

@@ -25,6 +25,22 @@ model Price {
   @@index([savedAt])
 }
 
+model PriceCandle {
+  id     BigInt   @id @default(autoincrement())
+  symbol String   @db.VarChar(20)
+  t      DateTime @db.Timestamp(3)
+  o      Decimal  @db.Decimal(18, 4)
+  h      Decimal  @db.Decimal(18, 4)
+  l      Decimal  @db.Decimal(18, 4)
+  c      Decimal  @db.Decimal(18, 4)
+  v      BigInt?
+
+  @@unique([symbol, t])
+  @@index([symbol, t])
+  @@index([t])
+  @@map("prices")
+}
+
 model IndexValue {
   id        BigInt   @id @default(autoincrement())
   indexName String   @unique @db.VarChar(80)

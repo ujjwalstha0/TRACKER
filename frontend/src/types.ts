@@ -112,3 +112,37 @@ export interface IndexApiRow {
   change_pct: number;
   savedAt: string;
 }
+
+export interface OhlcCandle {
+  t: string;
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v: number | null;
+}
+
+export interface IndicatorPoint {
+  t: string;
+  value: number | null;
+}
+
+export interface IndicatorsResponse {
+  symbol: string;
+  interval: '1m' | '5m' | '15m' | '1h' | '1d';
+  candles: OhlcCandle[];
+  sma20: IndicatorPoint[];
+  ema20: IndicatorPoint[];
+  rsi14: IndicatorPoint[];
+  macd: {
+    line: IndicatorPoint[];
+    signal: IndicatorPoint[];
+    histogram: IndicatorPoint[];
+  };
+  bollinger: {
+    upper: IndicatorPoint[];
+    middle: IndicatorPoint[];
+    lower: IndicatorPoint[];
+  };
+  vwap: IndicatorPoint[];
+}
