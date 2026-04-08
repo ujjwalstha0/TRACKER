@@ -205,8 +205,18 @@ export class NepseScrapeService {
   private parseIndices(html: string): IndexValueDto[] {
     const $ = cheerio.load(html);
     const table = this.findTable($, ['index', 'change']);
-    if (!table) return [];
+    if (table) {
+      const parsedFromTable = this.parseIndicesFromTable($, table);
+      if (parsedFromTable.length) return parsedFromTable;
+    }
 
+    return this.parseIndicesFromCards($);
+  }
+
+  private parseIndicesFromTable(
+    $: cheerio.CheerioAPI,
+    table: cheerio.Cheerio<AnyNode>,
+  ): IndexValueDto[] {
     const headers = this.extractHeaders($, table);
     const rows = this.extractRows($, table);
 
@@ -232,6 +242,54 @@ export class NepseScrapeService {
     }
 
     return parsed;
+  }
+
+  private parseIndicesFromCards($: cheerio.CheerioAPI): IndexValueDto[] {
+    const cards = $('.mu-list').toArray();
+    if (!cards.length) return [];
+
+    const parsed: IndexValueDto[] = [];
+
+    for (const card of cards) {
+      const cardEl = $(card);
+      const indexName = cardEl.find('h4').first().text().trim();
+      if (!indexName) continue;
+
+      const value = this.toNumber(cardEl.find('.mu-value').first().text());
+      const rawPct = this.toNumber(cardEl.find('.mu-percent').first().text());
+      if (value === null || rawPct === null) continue;
+
+      const changePct = this.applyDirectionalSign(cardEl.find('.mu-percent').first(), rawPct);
+      const change = this.estimateChangeFromPercent(value, changePct);
+
+      parsed.push({ indexName, value, change, changePct });
+    }
+
+    return parsed;
+  }
+
+  private applyDirectionalSign(element: cheerio.Cheerio<AnyNode>, value: number): number {
+    const classNames = (element.attr('class') ?? '').toLowerCase();
+    const iconClasses = (element.find('i').attr('class') ?? '').toLowerCase();
+
+    if (classNames.includes('text-red') || iconClasses.includes('caret-down')) {
+      return -Math.abs(value);
+    }
+
+    if (classNames.includes('text-green') || iconClasses.includes('caret-up')) {
+      return Math.abs(value);
+    }
+
+    return value;
+  }
+
+  private estimateChangeFromPercent(value: number, changePct: number): number {
+    const ratio = changePct / 100;
+    if (ratio === 0 || ratio <= -1) return 0;
+
+    const previous = value / (1 + ratio);
+    const change = value - previous;
+    return Number(change.toFixed(4));
   }
 
   private findTable($: cheerio.CheerioAPI, requiredHeaderFragments: string[]): cheerio.Cheerio<AnyNode> | null {
