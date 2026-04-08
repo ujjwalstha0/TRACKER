@@ -1,27 +1,27 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap');
 
 :root {
-  --bg: #f2f5f8;
+  --bg: #f4f7f9;
   --panel: #ffffff;
-  --line: #d7dee8;
-  --text: #0f1d2e;
-  --muted: #5e6b79;
-  --accent: #1862d6;
-  --accent-soft: #e7f0ff;
-  --profit: #0f9768;
-  --loss: #d44a4a;
+  --line: #d8dfe6;
+  --text: #111f30;
+  --muted: #5a6876;
+  --accent: #f28f25;
+  --accent-soft: #fff2e4;
+  --profit: #1fbe86;
+  --loss: #dc5757;
 }
 
 .theme-dark {
-  --bg: #0b1320;
-  --panel: #121d2d;
-  --line: #22334c;
-  --text: #edf3ff;
-  --muted: #8ba1be;
-  --accent: #6aa8ff;
-  --accent-soft: #1a2c49;
-  --profit: #35d59d;
-  --loss: #ff8a8a;
+  --bg: #0b1118;
+  --panel: #121a24;
+  --line: #2a3748;
+  --text: #ecf2fc;
+  --muted: #93a4ba;
+  --accent: #ff9f38;
+  --accent-soft: #3a2a18;
+  --profit: #37d89f;
+  --loss: #ff8989;
 }
 
 * {
@@ -30,27 +30,44 @@
 
 body {
   margin: 0;
-  font-family: 'Inter', sans-serif;
-  background: radial-gradient(circle at top right, rgba(91, 143, 255, 0.16), transparent 32%), var(--bg);
+  font-family: 'Manrope', sans-serif;
+  background:
+    radial-gradient(circle at 90% 5%, rgba(255, 160, 60, 0.14), transparent 30%),
+    radial-gradient(circle at 6% 14%, rgba(92, 138, 255, 0.11), transparent 28%),
+    var(--bg);
   color: var(--text);
 }
 
 .app-shell {
   min-height: 100vh;
-  padding: 24px;
+  max-width: 1220px;
+  margin: 0 auto;
+  padding: 24px 18px;
 }
 
 .app-header {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px;
-  margin-bottom: 14px;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.brand-block {
+  display: grid;
+  gap: 6px;
+}
+
+.brand-tag {
+  font-family: 'IBM Plex Mono', monospace;
+  letter-spacing: 0.17em;
+  color: var(--accent);
+  font-size: 0.72rem;
 }
 
 .app-header h1 {
   margin: 0;
-  font-size: 1.5rem;
+  font-size: 1.6rem;
 }
 
 .app-header p {
@@ -72,13 +89,13 @@ body {
 }
 
 .theme-btn {
-  padding: 9px 12px;
+  padding: 10px 13px;
 }
 
 .tab-nav {
   display: flex;
   gap: 8px;
-  margin-bottom: 14px;
+  margin-bottom: 18px;
 }
 
 .tab {
@@ -93,10 +110,10 @@ body {
 
 .card {
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 16px;
   background: var(--panel);
-  box-shadow: 0 10px 24px rgba(7, 16, 34, 0.12);
-  padding: 16px;
+  box-shadow: 0 18px 40px rgba(5, 13, 27, 0.16);
+  padding: 18px;
 }
 
 .card h2 {
@@ -105,11 +122,12 @@ body {
 
 .subtle {
   color: var(--muted);
-  margin: 6px 0 14px;
+  margin: 6px 0 16px;
 }
 
 .form-grid {
   display: grid;
+  grid-template-columns: repeat(2, minmax(200px, 1fr));
   gap: 12px;
 }
 
@@ -121,6 +139,11 @@ body {
 .label {
   font-size: 0.87rem;
   color: var(--muted);
+}
+
+.field-group small {
+  color: var(--muted);
+  font-size: 0.78rem;
 }
 
 input,
@@ -140,7 +163,7 @@ input[readonly] {
 
 .toggle-row {
   display: grid;
-  grid-template-columns: repeat(2, minmax(120px, 1fr));
+  grid-template-columns: repeat(2, minmax(140px, 1fr));
   gap: 8px;
 }
 
@@ -158,6 +181,7 @@ input[readonly] {
   background: var(--accent);
   border-color: var(--accent);
   color: #ffffff;
+  grid-column: 1 / -1;
 }
 
 .primary-btn:disabled {
@@ -174,14 +198,14 @@ input[readonly] {
 .summary-grid {
   margin-top: 14px;
   display: grid;
-  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  grid-template-columns: repeat(3, minmax(190px, 1fr));
   gap: 10px;
 }
 
 .summary-card {
   border: 1px solid var(--line);
   border-radius: 10px;
-  padding: 11px;
+  padding: 12px;
   background: color-mix(in srgb, var(--panel) 90%, var(--accent-soft));
 }
 
@@ -193,7 +217,7 @@ input[readonly] {
 
 .summary-card h3 {
   margin: 7px 0 0;
-  font-size: 1.04rem;
+  font-size: 1.06rem;
 }
 
 .summary-card small {
@@ -235,20 +259,25 @@ th {
 }
 
 .simulator-grid {
-  grid-template-columns: repeat(3, minmax(200px, 1fr));
+  grid-template-columns: repeat(3, minmax(210px, 1fr));
 }
 
 @media (max-width: 1024px) {
   .app-shell {
-    padding: 14px;
+    padding: 14px 12px;
   }
 
   .app-header {
     flex-direction: column;
+    align-items: flex-start;
   }
 
   .tab-nav {
     flex-wrap: wrap;
+  }
+
+  .form-grid {
+    grid-template-columns: 1fr;
   }
 
   .summary-grid,

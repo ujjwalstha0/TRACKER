@@ -22,6 +22,8 @@ export function PLSimulator() {
   const [trades, setTrades] = useState<TradeRow[]>([]);
   const [loadingTrades, setLoadingTrades] = useState(false);
   const [selectedTradeId, setSelectedTradeId] = useState<number | null>(null);
+  const [buyPrice, setBuyPrice] = useState(0);
+  const [quantity, setQuantity] = useState(0);
   const [holdingDays, setHoldingDays] = useState(0);
   const [targetPrice, setTargetPrice] = useState(0);
   const [stopLossPrice, setStopLossPrice] = useState(0);
@@ -45,6 +47,8 @@ export function PLSimulator() {
   useEffect(() => {
     if (!selectedTrade) return;
     const estimated = estimateHoldingDays(selectedTrade.purchasedAt);
+    setBuyPrice(selectedTrade.price);
+    setQuantity(selectedTrade.qty);
     setHoldingDays(estimated);
     setTargetPrice(Number((selectedTrade.price * 1.1).toFixed(2)));
     setStopLossPrice(Number((selectedTrade.price * 0.95).toFixed(2)));
@@ -61,8 +65,13 @@ export function PLSimulator() {
   const handleSimulate = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
-      if (!selectedTrade) {
-        setError('Please select a buy trade first.');
+      if (buyPrice <= 0 || quantity <= 0) {
+        setError('Buy price and quantity are required.');
+        return;
+      }
+
+      if (targetPrice <= 0 || stopLossPrice <= 0) {
+        setError('Target and stop-loss price are required.');
         return;
       }
 
@@ -70,12 +79,24 @@ export function PLSimulator() {
       setError('');
 
       try {
+        const buySnapshot = selectedTrade
+          ? null
+          : await calculateNepseCost({
+              isBuy: true,
+              price: buyPrice,
+              qty: quantity,
+              instrumentType: 'equity',
+              buyPrice: null,
+              holdingDays: null,
+              traderType: 'individual',
+            });
+
         const payloadBase = {
           isBuy: false,
-          qty: selectedTrade.qty,
+          qty: quantity,
           instrumentType: 'equity' as const,
           traderType: 'individual' as const,
-          buyPrice: selectedTrade.price,
+          buyPrice,
           holdingDays,
         };
 
@@ -84,7 +105,7 @@ export function PLSimulator() {
           calculateNepseCost({ ...payloadBase, price: stopLossPrice }),
         ]);
 
-        const costBasis = selectedTrade.netCostOrProceeds;
+        const costBasis = selectedTrade ? selectedTrade.netCostOrProceeds : buySnapshot?.totalAmountToPay ?? 0;
         setResult({
           target,
           stopLoss,
@@ -99,7 +120,7 @@ export function PLSimulator() {
         setLoading(false);
       }
     },
-    [holdingDays, selectedTrade, stopLossPrice, targetPrice],
+    [buyPrice, holdingDays, quantity, selectedTrade, stopLossPrice, targetPrice],
   );
 
   return (
@@ -118,23 +139,41 @@ export function PLSimulator() {
             onChange={(e) => setSelectedTradeId(e.target.value ? Number(e.target.value) : null)}
             disabled={loadingTrades}
           >
-            <option value="">{loadingTrades ? 'Loading trades...' : 'Choose a buy trade'}</option>
+            <option value="">{loadingTrades ? 'Loading trades...' : 'Manual entry (no selected trade)'}</option>
             {trades.map((trade) => (
               <option key={trade.id} value={trade.id}>
                 {trade.symbol} | Buy: {trade.price} | Qty: {trade.qty}
               </option>
             ))}
           </select>
+          {!loadingTrades && trades.length === 0 ? <small className="subtle">No buy trades found. Use manual entry below.</small> : null}
         </div>
 
         <div className="field-group">
-          <label className="label">Buy price (auto)</label>
-          <input value={selectedTrade ? selectedTrade.price : ''} readOnly />
+          <label className="label" htmlFor="buyPrice">
+            Buy price (NPR)
+          </label>
+          <input
+            id="buyPrice"
+            type="number"
+            step="0.01"
+            value={buyPrice || ''}
+            onChange={(e) => setBuyPrice(Number(e.target.value))}
+            required
+          />
         </div>
 
         <div className="field-group">
-          <label className="label">Quantity (auto)</label>
-          <input value={selectedTrade ? selectedTrade.qty : ''} readOnly />
+          <label className="label" htmlFor="quantity">
+            Quantity
+          </label>
+          <input
+            id="quantity"
+            type="number"
+            value={quantity || ''}
+            onChange={(e) => setQuantity(Number(e.target.value))}
+            required
+          />
         </div>
 
         <div className="field-group">
@@ -146,7 +185,6 @@ export function PLSimulator() {
             type="number"
             value={holdingDays}
             onChange={(e) => setHoldingDays(Number(e.target.value))}
-            disabled={!selectedTrade}
             required
           />
         </div>
@@ -162,7 +200,6 @@ export function PLSimulator() {
             placeholder="900.00"
             value={targetPrice || ''}
             onChange={(e) => setTargetPrice(Number(e.target.value))}
-            disabled={!selectedTrade}
             required
           />
         </div>
@@ -178,12 +215,11 @@ export function PLSimulator() {
             placeholder="780.00"
             value={stopLossPrice || ''}
             onChange={(e) => setStopLossPrice(Number(e.target.value))}
-            disabled={!selectedTrade}
             required
           />
         </div>
 
-        <button className="primary-btn" type="submit" disabled={loading || !selectedTrade}>
+        <button className="primary-btn" type="submit" disabled={loading}>
           {loading ? 'Simulating...' : 'Run Simulation'}
         </button>
 

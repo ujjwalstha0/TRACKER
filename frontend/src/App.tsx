@@ -15,9 +15,10 @@ export default function App() {
   return (
     <div className={dark ? 'app-shell theme-dark' : 'app-shell'}>
       <header className="app-header">
-        <div>
-          <h1>NEPSE Personal Trading Calculator</h1>
-          <p>Buy/Sell cost and target/stop-loss preview for your own equity trades.</p>
+        <div className="brand-block">
+          <span className="brand-tag">NEPSE EXECUTION DESK</span>
+          <h1>Personal Trade Cost & Exit Simulator</h1>
+          <p>Professional buy/sell cost clarity and target/stop-loss outcome preview for equity trades.</p>
         </div>
         <button className="theme-btn" onClick={() => setDark((v) => !v)} type="button">
           {dark ? 'Light Mode' : 'Dark Mode'}

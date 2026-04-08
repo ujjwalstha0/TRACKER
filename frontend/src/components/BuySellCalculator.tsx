@@ -7,6 +7,7 @@ interface CalculatorFormState {
   price: number;
   qty: number;
   holdingDays: number;
+  buyPrice: number;
 }
 
 const defaultState: CalculatorFormState = {
@@ -14,6 +15,7 @@ const defaultState: CalculatorFormState = {
   price: 850,
   qty: 100,
   holdingDays: 180,
+  buyPrice: 650,
 };
 
 export function BuySellCalculator() {
@@ -42,12 +44,16 @@ export function BuySellCalculator() {
       setError('');
 
       try {
+        if (form.side === 'sell' && form.buyPrice <= 0) {
+          throw new Error('Original buy price is required for sell CGT calculation.');
+        }
+
         const data = await calculateNepseCost({
           isBuy: form.side === 'buy',
           price: form.price,
           qty: form.qty,
           instrumentType: 'equity',
-          buyPrice: null,
+          buyPrice: form.side === 'sell' ? form.buyPrice : null,
           holdingDays: form.side === 'sell' ? form.holdingDays : null,
           traderType: 'individual',
         });
@@ -59,7 +65,7 @@ export function BuySellCalculator() {
         setLoading(false);
       }
     },
-    [form.holdingDays, form.price, form.qty, form.side],
+    [form.buyPrice, form.holdingDays, form.price, form.qty, form.side],
   );
 
   const summary = useMemo(() => {
@@ -81,7 +87,7 @@ export function BuySellCalculator() {
       firstValue: result.netProceeds ?? 0,
       secondLabel: 'Transaction Value',
       secondValue: result.transactionValue,
-      thirdLabel: 'Total Deductions',
+      thirdLabel: 'Total Deductions (fees + CGT)',
       thirdValue: result.totalDeductions,
     };
   }, [form.side, result]);
@@ -142,19 +148,37 @@ export function BuySellCalculator() {
         </div>
 
         {form.side === 'sell' ? (
-          <div className="field-group">
-            <label className="label" htmlFor="holdingDays">
-              Holding days
-            </label>
-            <input
-              id="holdingDays"
-              type="number"
-              placeholder="180"
-              value={form.holdingDays}
-              onChange={(e) => setForm((old) => ({ ...old, holdingDays: Number(e.target.value) }))}
-              required
-            />
-          </div>
+          <>
+            <div className="field-group">
+              <label className="label" htmlFor="buyPrice">
+                Original buy price (NPR)
+              </label>
+              <input
+                id="buyPrice"
+                type="number"
+                step="0.01"
+                placeholder="650.00"
+                value={form.buyPrice}
+                onChange={(e) => setForm((old) => ({ ...old, buyPrice: Number(e.target.value) }))}
+                required
+              />
+            </div>
+
+            <div className="field-group">
+              <label className="label" htmlFor="holdingDays">
+                Holding days
+              </label>
+              <input
+                id="holdingDays"
+                type="number"
+                placeholder="180"
+                value={form.holdingDays}
+                onChange={(e) => setForm((old) => ({ ...old, holdingDays: Number(e.target.value) }))}
+                required
+              />
+              <small className="subtle">CGT 7.5% for &le;365 days, 5% for &gt;365 days on positive gain.</small>
+            </div>
+          </>
         ) : null}
 
         <button className="primary-btn" type="submit" disabled={loading}>
