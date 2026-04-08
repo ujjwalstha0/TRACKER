@@ -8,6 +8,9 @@ import scrapeConfig from '../config/scrape.config';
 import { PrismaService } from '../prisma/prisma.service';
 import { IndexValueDto, PriceDto } from './scrape.types';
 
+const FALLBACK_TODAY_PRICE_URL = 'https://www.sharesansar.com/today-share-price';
+const FALLBACK_LIVE_TRADING_URL = 'https://www.sharesansar.com/live-trading';
+
 @Injectable()
 export class NepseScrapeService {
   private readonly logger = new Logger(NepseScrapeService.name);
@@ -19,13 +22,33 @@ export class NepseScrapeService {
   ) {}
 
   async scrapeTodayPrices(): Promise<PriceDto[]> {
-    const html = await this.fetchHtml(this.config.todayPriceUrl);
+    const html = await this.fetchHtmlWithFallback(this.config.todayPriceUrl, [FALLBACK_TODAY_PRICE_URL]);
     return this.parseTodayPrices(html);
   }
 
   async scrapeIndices(): Promise<IndexValueDto[]> {
-    const html = await this.fetchHtml(this.config.liveTradingUrl);
+    const html = await this.fetchHtmlWithFallback(this.config.liveTradingUrl, [FALLBACK_LIVE_TRADING_URL]);
     return this.parseIndices(html);
+  }
+
+  private async fetchHtmlWithFallback(primaryUrl: string, fallbackUrls: string[]): Promise<string> {
+    const urls = [primaryUrl, ...fallbackUrls.filter((url) => url && url !== primaryUrl)];
+    let lastError: unknown = null;
+
+    for (const url of urls) {
+      try {
+        return await this.fetchHtml(url);
+      } catch (error) {
+        lastError = error;
+        this.logger.warn(`Scrape source failed: ${url}`);
+      }
+    }
+
+    if (lastError instanceof Error) {
+      throw lastError;
+    }
+
+    throw new Error('All scrape sources failed.');
   }
 
   async savePricesToDb(prices: PriceDto[]): Promise<void> {
