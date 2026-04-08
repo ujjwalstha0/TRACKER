@@ -15,6 +15,13 @@ function formatMoney(value: number): string {
   }).format(value);
 }
 
+function safeFixed(value: number | null | undefined, digits = 2): string {
+  if (value === null || value === undefined) return '-';
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return '-';
+  return parsed.toFixed(digits);
+}
+
 export function ChartDeskTerminalPage() {
   const { symbol: symbolParam } = useParams<{ symbol?: string }>();
   const navigate = useNavigate();
@@ -200,7 +207,7 @@ export function ChartDeskTerminalPage() {
       },
       yaxis: {
         labels: {
-          formatter: (value) => value.toFixed(2),
+          formatter: (value) => safeFixed(value, 2),
           style: { colors: '#a1a1aa' },
         },
         tooltip: {
