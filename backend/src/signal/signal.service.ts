@@ -102,6 +102,8 @@ export class SignalService {
     let buyScore = 0;
     let sellScore = 0;
     const reasons: string[] = [];
+    const hasValidBands =
+      Number.isFinite(data.bbLower) && Number.isFinite(data.bbUpper) && data.bbUpper > data.bbLower;
 
     if (data.ema8 > data.ema21 && (prevData ? prevData.ema8 <= prevData.ema21 : false)) {
       buyScore += 3;
@@ -128,9 +130,14 @@ export class SignalService {
       reasons.push('High volume');
     }
 
-    if (data.close <= data.bbLower) {
-      buyScore += 2;
-      reasons.push('Oversold bounce');
+    if (hasValidBands) {
+      if (data.close <= data.bbLower) {
+        buyScore += 2;
+        reasons.push('Oversold bounce');
+      } else if (data.close >= data.bbUpper) {
+        sellScore += 2;
+        reasons.push('Overbought rejection');
+      }
     }
 
     if (data.ema8 < data.ema21 && (prevData ? prevData.ema8 >= prevData.ema21 : false)) {
@@ -156,11 +163,6 @@ export class SignalService {
     if (data.avgVolume20 > 0 && data.volume > data.avgVolume20 * 1.5) {
       sellScore += 1;
       reasons.push('High volume');
-    }
-
-    if (data.close >= data.bbUpper) {
-      sellScore += 2;
-      reasons.push('Overbought rejection');
     }
 
     const signal: TradingSignalKind =
