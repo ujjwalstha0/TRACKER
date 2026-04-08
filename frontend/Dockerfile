@@ -6,6 +6,8 @@ RUN npm ci
 
 COPY tsconfig.json ./
 COPY vite.config.ts ./
+COPY postcss.config.js ./
+COPY tailwind.config.js ./
 COPY index.html ./
 COPY src ./src
 
