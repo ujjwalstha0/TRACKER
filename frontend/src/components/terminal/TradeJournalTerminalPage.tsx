@@ -18,6 +18,10 @@ function formatMoney(value: number): string {
   }).format(value);
 }
 
+function formatPercent(value: number): string {
+  return `${value.toFixed(2)}%`;
+}
+
 function computeFifoPnL(rows: TradeRow[]): TradeWithPnL[] {
   const lotsBySymbol = new Map<string, Lot[]>();
   const realizedByTradeId = new Map<number, number | null>();
@@ -74,6 +78,7 @@ function computeFifoPnL(rows: TradeRow[]): TradeWithPnL[] {
 export function TradeJournalTerminalPage() {
   const [rows, setRows] = useState<TradeRow[]>([]);
   const [error, setError] = useState('');
+  const [symbolFilter, setSymbolFilter] = useState('ALL');
 
   useEffect(() => {
     fetchTrades()
@@ -89,21 +94,64 @@ export function TradeJournalTerminalPage() {
 
   const enrichedRows = useMemo(() => computeFifoPnL(rows), [rows]);
 
+  const symbols = useMemo(
+    () => [...new Set(enrichedRows.map((row) => row.symbol))].sort((a, b) => a.localeCompare(b)),
+    [enrichedRows],
+  );
+
+  const visibleRows = useMemo(() => {
+    if (symbolFilter === 'ALL') return enrichedRows;
+    return enrichedRows.filter((row) => row.symbol === symbolFilter);
+  }, [enrichedRows, symbolFilter]);
+
   const summary = useMemo(() => {
-    const sells = enrichedRows.filter((row) => !row.isBuy);
+    const sells = visibleRows.filter((row) => !row.isBuy);
+    const closedSells = sells.filter((row) => row.realizedPnL !== null);
+
+    const wins = closedSells.filter((row) => (row.realizedPnL ?? 0) > 0);
+    const losses = closedSells.filter((row) => (row.realizedPnL ?? 0) < 0);
+
+    const grossWin = wins.reduce((sum, row) => sum + (row.realizedPnL ?? 0), 0);
+    const grossLossAbs = Math.abs(losses.reduce((sum, row) => sum + (row.realizedPnL ?? 0), 0));
+    const winRate = closedSells.length ? (wins.length / closedSells.length) * 100 : 0;
+    const avgWin = wins.length ? grossWin / wins.length : 0;
+    const avgLoss = losses.length ? grossLossAbs / losses.length : 0;
+    const expectancy = closedSells.length ? (grossWin - grossLossAbs) / closedSells.length : 0;
+
+    const bestTrade = closedSells.reduce<TradeWithPnL | null>((best, row) => {
+      if (!best) return row;
+      return (row.realizedPnL ?? Number.NEGATIVE_INFINITY) > (best.realizedPnL ?? Number.NEGATIVE_INFINITY)
+        ? row
+        : best;
+    }, null);
+
+    const worstTrade = closedSells.reduce<TradeWithPnL | null>((worst, row) => {
+      if (!worst) return row;
+      return (row.realizedPnL ?? Number.POSITIVE_INFINITY) < (worst.realizedPnL ?? Number.POSITIVE_INFINITY)
+        ? row
+        : worst;
+    }, null);
 
     const totalRealizedPnL = sells.reduce((sum, row) => sum + (row.realizedPnL ?? 0), 0);
     const totalCgt = sells.reduce((sum, row) => sum + Number(row.cgtAmount), 0);
 
-    const grossTurnover = enrichedRows.reduce((sum, row) => sum + Number(row.totalValue), 0);
+    const grossTurnover = visibleRows.reduce((sum, row) => sum + Number(row.totalValue), 0);
 
     return {
       totalRealizedPnL,
       totalCgt,
       grossTurnover,
-      tradeCount: enrichedRows.length,
+      tradeCount: visibleRows.length,
+      closedTradeCount: closedSells.length,
+      winRate,
+      avgWin,
+      avgLoss,
+      expectancy,
+      profitFactor: grossLossAbs > 0 ? grossWin / grossLossAbs : null,
+      bestTrade,
+      worstTrade,
     };
-  }, [enrichedRows]);
+  }, [visibleRows]);
 
   return (
     <section className="space-y-5">
@@ -131,11 +179,57 @@ export function TradeJournalTerminalPage() {
           <p className="text-xs uppercase tracking-wide text-zinc-500">Trades</p>
           <p className="mt-3 font-mono text-2xl font-bold text-white">{summary.tradeCount}</p>
         </article>
+        <article className="terminal-card p-4">
+          <p className="text-xs uppercase tracking-wide text-zinc-500">Closed Sells</p>
+          <p className="mt-3 font-mono text-2xl font-bold text-white">{summary.closedTradeCount}</p>
+        </article>
+        <article className="terminal-card p-4">
+          <p className="text-xs uppercase tracking-wide text-zinc-500">Win Rate</p>
+          <p className="mt-3 font-mono text-2xl font-bold text-white">{formatPercent(summary.winRate)}</p>
+        </article>
+        <article className="terminal-card p-4">
+          <p className="text-xs uppercase tracking-wide text-zinc-500">Profit Factor</p>
+          <p className="mt-3 font-mono text-2xl font-bold text-white">
+            {summary.profitFactor === null ? '-' : summary.profitFactor.toFixed(2)}
+          </p>
+        </article>
+        <article className="terminal-card p-4">
+          <p className="text-xs uppercase tracking-wide text-zinc-500">Expectancy / Closed Trade</p>
+          <p className={summary.expectancy >= 0 ? 'mt-3 font-mono text-2xl font-bold text-terminal-green' : 'mt-3 font-mono text-2xl font-bold text-terminal-red'}>
+            ₹ {formatMoney(summary.expectancy)}
+          </p>
+        </article>
+        <article className="terminal-card p-4">
+          <p className="text-xs uppercase tracking-wide text-zinc-500">Avg Win / Avg Loss</p>
+          <p className="mt-2 text-sm text-zinc-300">Win: <span className="font-mono text-terminal-green">₹ {formatMoney(summary.avgWin)}</span></p>
+          <p className="mt-1 text-sm text-zinc-300">Loss: <span className="font-mono text-terminal-red">₹ {formatMoney(summary.avgLoss)}</span></p>
+        </article>
+        <article className="terminal-card p-4">
+          <p className="text-xs uppercase tracking-wide text-zinc-500">Best / Worst Trade</p>
+          <p className="mt-2 text-sm text-zinc-300">
+            Best: <span className="font-mono text-terminal-green">{summary.bestTrade ? `${summary.bestTrade.symbol} (₹ ${formatMoney(summary.bestTrade.realizedPnL ?? 0)})` : '-'}</span>
+          </p>
+          <p className="mt-1 text-sm text-zinc-300">
+            Worst: <span className="font-mono text-terminal-red">{summary.worstTrade ? `${summary.worstTrade.symbol} (₹ ${formatMoney(summary.worstTrade.realizedPnL ?? 0)})` : '-'}</span>
+          </p>
+        </article>
       </section>
 
       <section className="terminal-card overflow-hidden">
-        <header className="border-b border-zinc-800 p-4">
+        <header className="flex flex-wrap items-center gap-3 border-b border-zinc-800 p-4">
           <h2 className="text-base font-semibold text-white">Journal Entries</h2>
+          <select
+            value={symbolFilter}
+            onChange={(event) => setSymbolFilter(event.target.value)}
+            className="terminal-input ml-auto max-w-[220px]"
+          >
+            <option value="ALL">All Symbols</option>
+            {symbols.map((symbol) => (
+              <option key={symbol} value={symbol}>
+                {symbol}
+              </option>
+            ))}
+          </select>
         </header>
 
         {error ? <p className="border-b border-zinc-800 px-4 py-3 text-sm text-terminal-red">{error}</p> : null}
@@ -155,8 +249,8 @@ export function TradeJournalTerminalPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-900/80">
-              {enrichedRows.length ? (
-                enrichedRows.map((row) => {
+              {visibleRows.length ? (
+                visibleRows.map((row) => {
                   const pnl = row.realizedPnL;
                   const pnlClass = pnl === null ? 'text-zinc-500' : pnl >= 0 ? 'text-terminal-green' : 'text-terminal-red';
 
@@ -178,7 +272,7 @@ export function TradeJournalTerminalPage() {
               ) : (
                 <tr>
                   <td colSpan={8} className="px-4 py-8 text-center text-zinc-500">
-                    No trade records available yet.
+                    No trade records available for the selected filter.
                   </td>
                 </tr>
               )}

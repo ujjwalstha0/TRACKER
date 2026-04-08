@@ -10,10 +10,21 @@ import { IndexValueDto, PriceDto } from './scrape.types';
 
 const FALLBACK_TODAY_PRICE_URL = 'https://www.sharesansar.com/today-share-price';
 const FALLBACK_LIVE_TRADING_URL = 'https://www.sharesansar.com/live-trading';
+const SYMBOL_PROFILE_URL = 'https://www.sharesansar.com/company-list';
+const SYMBOL_PROFILE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+
+interface SymbolProfile {
+  company: string | null;
+  sector: string | null;
+}
 
 @Injectable()
 export class NepseScrapeService {
   private readonly logger = new Logger(NepseScrapeService.name);
+  private symbolProfilesCache: {
+    fetchedAt: number;
+    bySymbol: Map<string, SymbolProfile>;
+  } | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -58,14 +69,19 @@ export class NepseScrapeService {
     }
 
     const savedAt = new Date();
+    const symbolProfiles = await this.getSymbolProfiles();
 
     for (const row of prices) {
+      const profile = symbolProfiles.get(row.symbol);
+      const company = row.company ?? profile?.company ?? null;
+      const sector = row.sector ?? profile?.sector ?? null;
+
       await this.prisma.price.upsert({
         where: { symbol: row.symbol },
         update: {
           // Keep previously known metadata/stats when the upstream feed omits them.
-          company: row.company ?? undefined,
-          sector: row.sector ?? undefined,
+          company: company ?? undefined,
+          sector: sector ?? undefined,
           ltp: row.ltp,
           change: row.change ?? undefined,
           changePct: row.changePct ?? undefined,
@@ -78,8 +94,8 @@ export class NepseScrapeService {
         },
         create: {
           symbol: row.symbol,
-          company: row.company,
-          sector: row.sector,
+          company,
+          sector,
           ltp: row.ltp,
           change: row.change,
           changePct: row.changePct,
@@ -120,6 +136,32 @@ export class NepseScrapeService {
           v: row.volume,
         },
       });
+    }
+  }
+
+  private async getSymbolProfiles(): Promise<Map<string, SymbolProfile>> {
+    if (
+      this.symbolProfilesCache &&
+      Date.now() - this.symbolProfilesCache.fetchedAt < SYMBOL_PROFILE_CACHE_TTL_MS
+    ) {
+      return this.symbolProfilesCache.bySymbol;
+    }
+
+    try {
+      const html = await this.fetchHtmlWithFallback(SYMBOL_PROFILE_URL, []);
+      const bySymbol = this.parseSymbolProfiles(html);
+
+      if (bySymbol.size > 0) {
+        this.symbolProfilesCache = {
+          fetchedAt: Date.now(),
+          bySymbol,
+        };
+      }
+
+      return bySymbol;
+    } catch (error) {
+      this.logger.warn('Symbol profile backfill source unavailable. Continuing without metadata enrichment.');
+      return this.symbolProfilesCache?.bySymbol ?? new Map<string, SymbolProfile>();
     }
   }
 
@@ -233,6 +275,38 @@ export class NepseScrapeService {
     }
 
     return parsed;
+  }
+
+  private parseSymbolProfiles(html: string): Map<string, SymbolProfile> {
+    const $ = cheerio.load(html);
+    const table = this.findTable($, ['symbol']);
+    if (!table) return new Map<string, SymbolProfile>();
+
+    const headers = this.extractHeaders($, table);
+    const rows = this.extractRows($, table);
+
+    const symbolIdx = this.resolveHeaderIndex(headers, ['symbol']);
+    const companyIdx = this.resolveHeaderIndex(headers, ['company', 'name']);
+    const sectorIdx = this.resolveHeaderIndex(headers, ['sector', 'group']);
+
+    const bySymbol = new Map<string, SymbolProfile>();
+
+    for (const row of rows) {
+      const cells = $(row).find('td').toArray();
+      if (!cells.length) continue;
+
+      const symbol = this.readCell($, cells, symbolIdx)?.toUpperCase() ?? '';
+      if (!symbol) continue;
+
+      const company = this.readCell($, cells, companyIdx);
+      const sector = this.readCell($, cells, sectorIdx);
+
+      if (!company && !sector) continue;
+
+      bySymbol.set(symbol, { company, sector });
+    }
+
+    return bySymbol;
   }
 
   private parseIndices(html: string): IndexValueDto[] {
