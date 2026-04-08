@@ -132,6 +132,26 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     );
 
     await this.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "AuthOtp" (
+        "id" BIGSERIAL PRIMARY KEY,
+        "email" VARCHAR(255) NOT NULL,
+        "purpose" VARCHAR(40) NOT NULL,
+        "codeHash" VARCHAR(128) NOT NULL,
+        "payload" JSONB,
+        "attempts" INTEGER NOT NULL DEFAULT 0,
+        "expiresAt" TIMESTAMP(3) NOT NULL,
+        "usedAt" TIMESTAMP(3),
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    await this.$executeRawUnsafe(
+      'CREATE INDEX IF NOT EXISTS "AuthOtp_email_purpose_createdAt_idx" ON "AuthOtp" ("email", "purpose", "createdAt");',
+    );
+    await this.$executeRawUnsafe(
+      'CREATE INDEX IF NOT EXISTS "AuthOtp_expiresAt_idx" ON "AuthOtp" ("expiresAt");',
+    );
+
+    await this.$executeRawUnsafe(`
       CREATE OR REPLACE FUNCTION set_updated_at_timestamp()
       RETURNS TRIGGER AS $$
       BEGIN

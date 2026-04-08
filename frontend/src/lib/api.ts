@@ -17,6 +17,18 @@ import { clearAuthSession, getAuthToken } from './auth';
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? '/api';
 
+function parseErrorMessage(body: { message?: string | string[] }, fallback: string): string {
+  if (Array.isArray(body.message)) {
+    return body.message.join(', ');
+  }
+
+  if (typeof body.message === 'string' && body.message.trim()) {
+    return body.message;
+  }
+
+  return fallback;
+}
+
 function authHeaderOrThrow(): Record<string, string> {
   const token = getAuthToken();
   if (!token) {
@@ -163,12 +175,12 @@ export async function fetchIndicators(symbol: string, interval = '1d', limit = 2
   return res.json();
 }
 
-export async function registerUser(payload: {
+export async function requestRegisterOtp(payload: {
   email: string;
   password: string;
   displayName?: string;
-}): Promise<AuthResponse> {
-  const res = await fetch(`${API_BASE}/auth/register`, {
+}): Promise<{ message: string }> {
+  const res = await fetch(`${API_BASE}/auth/register/request-otp`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -176,8 +188,25 @@ export async function registerUser(payload: {
 
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { message?: string | string[] };
-    const message = Array.isArray(body.message) ? body.message.join(', ') : body.message;
-    throw new Error(message ?? 'Failed to register account');
+    throw new Error(parseErrorMessage(body, 'Failed to send registration OTP'));
+  }
+
+  return res.json();
+}
+
+export async function verifyRegisterOtp(payload: {
+  email: string;
+  otp: string;
+}): Promise<AuthResponse> {
+  const res = await fetch(`${API_BASE}/auth/register/verify-otp`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string | string[] };
+    throw new Error(parseErrorMessage(body, 'Failed to verify OTP'));
   }
 
   return res.json();
@@ -192,8 +221,43 @@ export async function loginUser(payload: { email: string; password: string }): P
 
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { message?: string | string[] };
-    const message = Array.isArray(body.message) ? body.message.join(', ') : body.message;
-    throw new Error(message ?? 'Failed to login');
+    throw new Error(parseErrorMessage(body, 'Failed to login'));
+  }
+
+  return res.json();
+}
+
+export async function requestForgotPasswordOtp(payload: {
+  email: string;
+}): Promise<{ message: string }> {
+  const res = await fetch(`${API_BASE}/auth/password/forgot/request-otp`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string | string[] };
+    throw new Error(parseErrorMessage(body, 'Failed to send password reset OTP'));
+  }
+
+  return res.json();
+}
+
+export async function resetForgotPassword(payload: {
+  email: string;
+  otp: string;
+  newPassword: string;
+}): Promise<{ message: string }> {
+  const res = await fetch(`${API_BASE}/auth/password/forgot/reset`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string | string[] };
+    throw new Error(parseErrorMessage(body, 'Failed to reset password'));
   }
 
   return res.json();

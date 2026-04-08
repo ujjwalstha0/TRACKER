@@ -68,6 +68,21 @@ model Holding {
   @@index([userId, symbol])
 }
 
+model AuthOtp {
+  id        BigInt   @id @default(autoincrement())
+  email     String   @db.VarChar(255)
+  purpose   String   @db.VarChar(40)
+  codeHash  String   @db.VarChar(128)
+  payload   Json?
+  attempts  Int      @default(0)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([email, purpose, createdAt])
+  @@index([expiresAt])
+}
+
 model IndexValue {
   id        BigInt   @id @default(autoincrement())
   indexName String   @unique @db.VarChar(80)
