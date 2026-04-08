@@ -7,31 +7,27 @@ export interface ScrapeConfig {
   indexIntervalMillis: number;
 }
 
-function toNumber(name: string, value: string | undefined): number {
-  if (!value) {
-    throw new Error(`${name} is required`);
-  }
+const DEFAULT_TODAY_PRICE_URL = 'https://www.sharesansar.com/today-share-price';
+const DEFAULT_LIVE_TRADING_URL = 'https://www.sharesansar.com/live-trading';
+const DEFAULT_INTERVAL_MILLIS = 60_000;
 
+function toPositiveNumberOrDefault(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) {
-    throw new Error(`${name} must be a positive number`);
+    return fallback;
   }
 
   return parsed;
 }
 
 export default registerAs('scrape', (): ScrapeConfig => {
-  const todayPriceUrl = process.env.SCRAPING_TODAY_PRICE_URL;
-  const liveTradingUrl = process.env.SCRAPING_LIVE_TRADING_URL;
-
-  if (!todayPriceUrl || !liveTradingUrl) {
-    throw new Error('SCRAPING_TODAY_PRICE_URL and SCRAPING_LIVE_TRADING_URL are required');
-  }
+  const todayPriceUrl = process.env.SCRAPING_TODAY_PRICE_URL?.trim() || DEFAULT_TODAY_PRICE_URL;
+  const liveTradingUrl = process.env.SCRAPING_LIVE_TRADING_URL?.trim() || DEFAULT_LIVE_TRADING_URL;
 
   return {
     todayPriceUrl,
     liveTradingUrl,
-    priceIntervalMillis: toNumber('SCRAPING_PRICE_INTERVAL_MILLIS', process.env.SCRAPING_PRICE_INTERVAL_MILLIS),
-    indexIntervalMillis: toNumber('SCRAPING_INDEX_INTERVAL_MILLIS', process.env.SCRAPING_INDEX_INTERVAL_MILLIS),
+    priceIntervalMillis: toPositiveNumberOrDefault(process.env.SCRAPING_PRICE_INTERVAL_MILLIS, DEFAULT_INTERVAL_MILLIS),
+    indexIntervalMillis: toPositiveNumberOrDefault(process.env.SCRAPING_INDEX_INTERVAL_MILLIS, DEFAULT_INTERVAL_MILLIS),
   };
 });
