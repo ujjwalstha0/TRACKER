@@ -5,6 +5,9 @@ export class TradeEntity {
   @PrimaryGeneratedColumn()
   id!: number;
 
+  @Column({ type: 'bigint', name: 'user_id', nullable: true })
+  userId!: number | null;
+
   @Column({ type: 'varchar', length: 20 })
   symbol!: string;
 

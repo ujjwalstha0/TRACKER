@@ -13,7 +13,7 @@ export class TradesService {
     private readonly feesService: FeesService,
   ) {}
 
-  async create(dto: CreateTradeDto): Promise<TradeEntity> {
+  async create(userId: number, dto: CreateTradeDto): Promise<TradeEntity> {
     const holdingDays = dto.purchasedAt && dto.soldAt
       ? this.computeHoldingDays(dto.purchasedAt, dto.soldAt)
       : null;
@@ -33,6 +33,7 @@ export class TradesService {
     const netCostOrProceeds = dto.isBuy ? fee.totalBuyInCost : fee.netSellProceeds;
 
     const trade = this.tradesRepository.create({
+      userId,
       symbol: dto.symbol.toUpperCase(),
       isBuy: dto.isBuy,
       price: dto.price,
@@ -55,24 +56,26 @@ export class TradesService {
     return this.tradesRepository.save(trade);
   }
 
-  findAll(isBuy?: boolean): Promise<TradeEntity[]> {
+  findAll(userId: number, isBuy?: boolean): Promise<TradeEntity[]> {
+    const where = typeof isBuy === 'boolean' ? { userId, isBuy } : { userId };
+
     return this.tradesRepository.find({
-      where: typeof isBuy === 'boolean' ? { isBuy } : undefined,
+      where,
       order: { id: 'DESC' },
     });
   }
 
-  async findOne(id: number): Promise<TradeEntity> {
-    const trade = await this.tradesRepository.findOne({ where: { id } });
+  async findOne(userId: number, id: number): Promise<TradeEntity> {
+    const trade = await this.tradesRepository.findOne({ where: { id, userId } });
     if (!trade) {
       throw new NotFoundException('Trade not found');
     }
     return trade;
   }
 
-  async remove(id: number): Promise<void> {
-    await this.findOne(id);
-    await this.tradesRepository.delete({ id });
+  async remove(userId: number, id: number): Promise<void> {
+    await this.findOne(userId, id);
+    await this.tradesRepository.delete({ id, userId });
   }
 
   private computeHoldingDays(purchasedAt: string, soldAt: string): number {

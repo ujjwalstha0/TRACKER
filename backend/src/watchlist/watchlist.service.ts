@@ -15,6 +15,20 @@ interface WatchlistRow {
   turnover: number | null;
 }
 
+interface PriceSnapshotRow {
+  symbol: string;
+  company: string | null;
+  sector: string | null;
+  ltp: unknown;
+  change: unknown;
+  changePct: unknown;
+  open: unknown;
+  high: unknown;
+  low: unknown;
+  volume: bigint | null;
+  turnover: unknown;
+}
+
 @Injectable()
 export class WatchlistService {
   private readonly logger = new Logger(WatchlistService.name);
@@ -22,9 +36,9 @@ export class WatchlistService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getWatchlist(): Promise<WatchlistRow[]> {
-    let rows;
+    let rows: PriceSnapshotRow[];
     try {
-      rows = await this.prisma.price.findMany({ orderBy: { symbol: 'asc' } });
+      rows = (await this.prisma.price.findMany({ orderBy: { symbol: 'asc' } })) as PriceSnapshotRow[];
     } catch (error) {
       if (this.isMissingTableError(error)) {
         this.logger.warn('Price table missing. Returning empty watchlist until bootstrap completes.');

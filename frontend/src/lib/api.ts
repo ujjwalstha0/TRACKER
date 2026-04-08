@@ -1,4 +1,7 @@
 import {
+  AuthResponse,
+  AuthUser,
+  CreateHoldingPayload,
   FeeCalculationInput,
   FeeCalculationResult,
   IndexApiRow,
@@ -6,11 +9,47 @@ import {
   NepseCostRequest,
   NepseCostResponse,
   OhlcCandle,
+  PortfolioResponse,
   TradeRow,
   WatchlistApiRow,
 } from '../types';
+import { clearAuthSession, getAuthToken } from './auth';
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? '/api';
+
+function authHeaderOrThrow(): Record<string, string> {
+  const token = getAuthToken();
+  if (!token) {
+    throw new Error('You need to login to access this feature.');
+  }
+
+  return {
+    Authorization: `Bearer ${token}`,
+  };
+}
+
+async function handleProtectedFailure(res: Response): Promise<never> {
+  if (res.status === 401) {
+    clearAuthSession();
+    throw new Error('Session expired. Please login again.');
+  }
+
+  const fallback = `Request failed with status ${res.status}`;
+  let message = fallback;
+
+  try {
+    const body = (await res.json()) as { message?: string | string[] };
+    if (Array.isArray(body.message)) {
+      message = body.message.join(', ');
+    } else if (typeof body.message === 'string' && body.message.trim()) {
+      message = body.message;
+    }
+  } catch {
+    // Fall back to status-derived error message when body is not JSON.
+  }
+
+  throw new Error(message);
+}
 
 export async function calculateFees(payload: FeeCalculationInput): Promise<FeeCalculationResult> {
   const res = await fetch(`${API_BASE}/fees/calculate`, {
@@ -27,9 +66,13 @@ export async function calculateFees(payload: FeeCalculationInput): Promise<FeeCa
 }
 
 export async function fetchTrades(): Promise<TradeRow[]> {
-  const res = await fetch(`${API_BASE}/trades`);
+  const res = await fetch(`${API_BASE}/trades`, {
+    headers: {
+      ...authHeaderOrThrow(),
+    },
+  });
   if (!res.ok) {
-    throw new Error('Failed to load journal');
+    return handleProtectedFailure(res);
   }
   return res.json();
 }
@@ -37,12 +80,12 @@ export async function fetchTrades(): Promise<TradeRow[]> {
 export async function createTrade(payload: Record<string, unknown>): Promise<TradeRow> {
   const res = await fetch(`${API_BASE}/trades`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaderOrThrow() },
     body: JSON.stringify(payload),
   });
 
   if (!res.ok) {
-    throw new Error('Failed to save trade');
+    return handleProtectedFailure(res);
   }
 
   return res.json();
@@ -63,9 +106,13 @@ export async function calculateNepseCost(payload: NepseCostRequest): Promise<Nep
 }
 
 export async function fetchBuyTrades(): Promise<TradeRow[]> {
-  const res = await fetch(`${API_BASE}/trades?isBuy=true`);
+  const res = await fetch(`${API_BASE}/trades?isBuy=true`, {
+    headers: {
+      ...authHeaderOrThrow(),
+    },
+  });
   if (!res.ok) {
-    throw new Error('Failed to load buy trades');
+    return handleProtectedFailure(res);
   }
   return res.json();
 }
@@ -114,4 +161,115 @@ export async function fetchIndicators(symbol: string, interval = '1d', limit = 2
   }
 
   return res.json();
+}
+
+export async function registerUser(payload: {
+  email: string;
+  password: string;
+  displayName?: string;
+}): Promise<AuthResponse> {
+  const res = await fetch(`${API_BASE}/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string | string[] };
+    const message = Array.isArray(body.message) ? body.message.join(', ') : body.message;
+    throw new Error(message ?? 'Failed to register account');
+  }
+
+  return res.json();
+}
+
+export async function loginUser(payload: { email: string; password: string }): Promise<AuthResponse> {
+  const res = await fetch(`${API_BASE}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string | string[] };
+    const message = Array.isArray(body.message) ? body.message.join(', ') : body.message;
+    throw new Error(message ?? 'Failed to login');
+  }
+
+  return res.json();
+}
+
+export async function fetchMe(): Promise<AuthUser> {
+  const res = await fetch(`${API_BASE}/auth/me`, {
+    headers: {
+      ...authHeaderOrThrow(),
+    },
+  });
+
+  if (!res.ok) {
+    return handleProtectedFailure(res);
+  }
+
+  return res.json();
+}
+
+export async function fetchPortfolio(): Promise<PortfolioResponse> {
+  const res = await fetch(`${API_BASE}/portfolio/holdings`, {
+    headers: {
+      ...authHeaderOrThrow(),
+    },
+  });
+
+  if (!res.ok) {
+    return handleProtectedFailure(res);
+  }
+
+  return res.json();
+}
+
+export async function createHolding(payload: CreateHoldingPayload) {
+  const res = await fetch(`${API_BASE}/portfolio/holdings`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaderOrThrow(),
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    return handleProtectedFailure(res);
+  }
+
+  return res.json();
+}
+
+export async function updateHolding(id: number, payload: Partial<CreateHoldingPayload>) {
+  const res = await fetch(`${API_BASE}/portfolio/holdings/${id}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaderOrThrow(),
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    return handleProtectedFailure(res);
+  }
+
+  return res.json();
+}
+
+export async function removeHolding(id: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/portfolio/holdings/${id}`, {
+    method: 'DELETE',
+    headers: {
+      ...authHeaderOrThrow(),
+    },
+  });
+
+  if (!res.ok) {
+    return handleProtectedFailure(res);
+  }
 }

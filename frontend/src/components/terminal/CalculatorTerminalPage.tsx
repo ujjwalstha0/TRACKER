@@ -11,6 +11,18 @@ interface FormState {
   qty: string;
   buyPrice: string;
   holdingDays: string;
+  targetPrice: string;
+  stopLoss: string;
+  scenarioHoldingDays: string;
+}
+
+interface ScenarioResult {
+  targetPrice: number | null;
+  stopLoss: number | null;
+  targetNet: number | null;
+  targetPnl: number | null;
+  stopNet: number | null;
+  stopPnl: number | null;
 }
 
 const INITIAL_FORM: FormState = {
@@ -20,9 +32,13 @@ const INITIAL_FORM: FormState = {
   qty: '100',
   buyPrice: '',
   holdingDays: '',
+  targetPrice: '',
+  stopLoss: '',
+  scenarioHoldingDays: '180',
 };
 
-function formatMoney(value: number): string {
+function formatMoney(value: number | null): string {
+  if (value === null) return '-';
   return new Intl.NumberFormat('en-IN', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
@@ -39,6 +55,7 @@ export function CalculatorTerminalPage() {
   const [form, setForm] = useState<FormState>(INITIAL_FORM);
   const [watchlist, setWatchlist] = useState<WatchlistApiRow[]>([]);
   const [result, setResult] = useState<NepseCostResponse | null>(null);
+  const [scenario, setScenario] = useState<ScenarioResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -99,6 +116,9 @@ export function CalculatorTerminalPage() {
       const qty = Number(form.qty);
       const buyPrice = Number(form.buyPrice);
       const holdingDays = Number(form.holdingDays);
+      const targetPrice = Number(form.targetPrice);
+      const stopLoss = Number(form.stopLoss);
+      const scenarioHoldingDays = Number(form.scenarioHoldingDays);
 
       if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(qty) || qty <= 0) {
         throw new Error('Price and quantity must be valid positive numbers.');
@@ -124,8 +144,66 @@ export function CalculatorTerminalPage() {
 
       const response = await calculateNepseCost(payload);
       setResult(response);
+
+      if (form.side === 'buy') {
+        const requestDays = Number.isFinite(scenarioHoldingDays) && scenarioHoldingDays >= 0 ? scenarioHoldingDays : 180;
+
+        const sellRequests: Array<Promise<NepseCostResponse>> = [];
+        const hasTarget = Number.isFinite(targetPrice) && targetPrice > 0;
+        const hasStop = Number.isFinite(stopLoss) && stopLoss > 0;
+
+        if (hasTarget) {
+          sellRequests.push(
+            calculateNepseCost({
+              isBuy: false,
+              price: targetPrice,
+              qty,
+              instrumentType: 'equity',
+              buyPrice: price,
+              holdingDays: requestDays,
+              traderType: 'individual',
+            }),
+          );
+        }
+
+        if (hasStop) {
+          sellRequests.push(
+            calculateNepseCost({
+              isBuy: false,
+              price: stopLoss,
+              qty,
+              instrumentType: 'equity',
+              buyPrice: price,
+              holdingDays: requestDays,
+              traderType: 'individual',
+            }),
+          );
+        }
+
+        if (sellRequests.length) {
+          const sellResults = await Promise.all(sellRequests);
+
+          const targetResult = hasTarget ? sellResults[0] : null;
+          const stopResult = hasStop ? sellResults[sellResults.length - 1] : null;
+
+          const buyIn = response.totalAmountToPay ?? 0;
+          setScenario({
+            targetPrice: hasTarget ? targetPrice : null,
+            stopLoss: hasStop ? stopLoss : null,
+            targetNet: targetResult?.netProceeds ?? null,
+            targetPnl: targetResult?.netProceeds !== null && targetResult?.netProceeds !== undefined ? targetResult.netProceeds - buyIn : null,
+            stopNet: stopResult?.netProceeds ?? null,
+            stopPnl: stopResult?.netProceeds !== null && stopResult?.netProceeds !== undefined ? stopResult.netProceeds - buyIn : null,
+          });
+        } else {
+          setScenario(null);
+        }
+      } else {
+        setScenario(null);
+      }
     } catch (submissionError) {
       setResult(null);
+      setScenario(null);
       setError(submissionError instanceof Error ? submissionError.message : 'Failed to calculate.');
     } finally {
       setLoading(false);
@@ -189,6 +267,51 @@ export function CalculatorTerminalPage() {
               />
             </div>
           </div>
+
+          {form.side === 'buy' ? (
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="space-y-1">
+                <label htmlFor="targetPrice" className="text-xs font-medium uppercase tracking-wide text-zinc-400">
+                  Target Price
+                </label>
+                <input
+                  id="targetPrice"
+                  type="number"
+                  value={form.targetPrice}
+                  onChange={(event) => setForm((old) => ({ ...old, targetPrice: event.target.value }))}
+                  className="terminal-input font-mono"
+                  placeholder="920"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label htmlFor="stopLoss" className="text-xs font-medium uppercase tracking-wide text-zinc-400">
+                  Stop-Loss Price
+                </label>
+                <input
+                  id="stopLoss"
+                  type="number"
+                  value={form.stopLoss}
+                  onChange={(event) => setForm((old) => ({ ...old, stopLoss: event.target.value }))}
+                  className="terminal-input font-mono"
+                  placeholder="790"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label htmlFor="scenarioHoldingDays" className="text-xs font-medium uppercase tracking-wide text-zinc-400">
+                  Scenario Holding Days
+                </label>
+                <input
+                  id="scenarioHoldingDays"
+                  type="number"
+                  value={form.scenarioHoldingDays}
+                  onChange={(event) => setForm((old) => ({ ...old, scenarioHoldingDays: event.target.value }))}
+                  className="terminal-input font-mono"
+                />
+              </div>
+            </div>
+          ) : null}
 
           <div className="grid grid-cols-2 gap-2">
             <button
@@ -278,6 +401,25 @@ export function CalculatorTerminalPage() {
               <dd className="terminal-pill font-mono uppercase tracking-wide text-zinc-300">{form.side}</dd>
             </div>
           </dl>
+
+          {scenario ? (
+            <div className="mt-5 grid gap-3 md:grid-cols-2">
+              <article className="rounded-lg border border-zinc-700 bg-zinc-950/70 p-3">
+                <p className="text-xs uppercase tracking-wide text-zinc-400">If Target Hits ({scenario.targetPrice ? `₹ ${formatMoney(scenario.targetPrice)}` : '-'})</p>
+                <p className="mt-2 font-mono text-sm text-zinc-300">Net: ₹ {formatMoney(scenario.targetNet)}</p>
+                <p className={scenario.targetPnl !== null && scenario.targetPnl >= 0 ? 'font-mono text-lg font-semibold text-terminal-green' : 'font-mono text-lg font-semibold text-terminal-red'}>
+                  P&L: {scenario.targetPnl === null ? '-' : `₹ ${formatMoney(scenario.targetPnl)}`}
+                </p>
+              </article>
+              <article className="rounded-lg border border-zinc-700 bg-zinc-950/70 p-3">
+                <p className="text-xs uppercase tracking-wide text-zinc-400">If Stop Hits ({scenario.stopLoss ? `₹ ${formatMoney(scenario.stopLoss)}` : '-'})</p>
+                <p className="mt-2 font-mono text-sm text-zinc-300">Net: ₹ {formatMoney(scenario.stopNet)}</p>
+                <p className={scenario.stopPnl !== null && scenario.stopPnl >= 0 ? 'font-mono text-lg font-semibold text-terminal-green' : 'font-mono text-lg font-semibold text-terminal-red'}>
+                  P&L: {scenario.stopPnl === null ? '-' : `₹ ${formatMoney(scenario.stopPnl)}`}
+                </p>
+              </article>
+            </div>
+          ) : null}
         </aside>
       </div>
 

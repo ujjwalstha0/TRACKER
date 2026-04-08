@@ -146,3 +146,57 @@ export interface IndicatorsResponse {
   };
   vwap: IndicatorPoint[];
 }
+
+export interface AuthUser {
+  id: number;
+  email: string;
+  displayName: string | null;
+}
+
+export interface AuthResponse {
+  token: string;
+  user: AuthUser;
+}
+
+export interface HoldingRow {
+  id: number;
+  symbol: string;
+  company: string | null;
+  sector: string | null;
+  qty: number;
+  buyPrice: number;
+  targetPrice: number | null;
+  stopLoss: number | null;
+  notes: string | null;
+  currentPrice: number | null;
+  currentChangePct: number | null;
+  currentValue: number | null;
+  netIfSellNow: number | null;
+  pnlNow: number | null;
+  netIfTargetHit: number | null;
+  pnlIfTargetHit: number | null;
+  netIfStopLossHit: number | null;
+  pnlIfStopLossHit: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PortfolioResponse {
+  summary: {
+    holdingsCount: number;
+    investedCost: number;
+    currentValue: number;
+    netIfSellNow: number;
+    unrealizedPnl: number;
+  };
+  holdings: HoldingRow[];
+}
+
+export interface CreateHoldingPayload {
+  symbol: string;
+  buyPrice: number;
+  qty: number;
+  targetPrice?: number;
+  stopLoss?: number;
+  notes?: string;
+}
