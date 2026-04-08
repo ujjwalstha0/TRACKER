@@ -8,10 +8,19 @@ const THEME_KEY = 'nepse.personal-calculator.theme';
 
 export default function App() {
   const [dark, setDark] = useState<boolean>(() => localStorage.getItem(THEME_KEY) !== 'light');
+  const [now, setNow] = useState(() => new Date());
 
   useEffect(() => {
     localStorage.setItem(THEME_KEY, dark ? 'dark' : 'light');
   }, [dark]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNow(new Date());
+    }, 30_000);
+
+    return () => clearInterval(timer);
+  }, []);
 
   return (
     <div className={dark ? 'app-shell theme-dark' : 'app-shell'}>
@@ -19,6 +28,7 @@ export default function App() {
         <div className="brand-block">
           <span className="brand-tag">NEPSE EXECUTION DESK</span>
           <strong>Personal Trade Cost Terminal</strong>
+          <small>Clarity over noise, process over impulse.</small>
         </div>
         <nav className="tab-nav">
           <NavLink to="/" end className={({ isActive }) => (isActive ? 'tab active' : 'tab')}>
@@ -31,14 +41,36 @@ export default function App() {
             P/L Simulator
           </NavLink>
         </nav>
-        <button className="theme-btn" onClick={() => setDark((v) => !v)} type="button">
-          {dark ? 'Light Mode' : 'Dark Mode'}
-        </button>
+
+        <div className="top-meta">
+          <span>{now.toLocaleString()}</span>
+          <button className="theme-btn" onClick={() => setDark((v) => !v)} type="button">
+            {dark ? 'Light Mode' : 'Dark Mode'}
+          </button>
+        </div>
       </header>
 
-      <section className="hero-head">
-        <h1>Personal Trade Cost & Exit Simulator</h1>
-        <p>Professional buy/sell clarity with detailed charge math and scenario outcomes for equity trades.</p>
+      <section className="hero-head card-lite">
+        <div>
+          <p className="hero-kicker">Built To Beat Information Overload</p>
+          <h1>Read The Market Fast. Execute With Conviction.</h1>
+          <p>Live pulse, transparent fee math, and practical scenario planning in one focused interface.</p>
+        </div>
+
+        <div className="hero-points">
+          <article className="hero-chip">
+            <strong>Live Pulse</strong>
+            <span>Top movers and indices at a glance.</span>
+          </article>
+          <article className="hero-chip">
+            <strong>Cost Clarity</strong>
+            <span>Exact broker, SEBON, DP, and CGT impact.</span>
+          </article>
+          <article className="hero-chip">
+            <strong>Decision Discipline</strong>
+            <span>Target and stop-loss outcomes before execution.</span>
+          </article>
+        </div>
       </section>
 
       <main>
@@ -52,7 +84,7 @@ export default function App() {
 
       <footer className="app-footer card-lite">
         <span>Private use only • Backend-only scraping • Data updates by your own VPS jobs</span>
-        <span>Built for NEPSE equity execution decisions</span>
+        <span>Built for NEPSE equity execution decisions • Focus. Plan. Execute.</span>
       </footer>
     </div>
   );
