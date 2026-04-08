@@ -2,32 +2,25 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 
 type InstrumentType = 'equity' | 'debenture' | 'other';
 type TraderType = 'individual' | 'entity';
+type ListingType = 'listed' | 'unlisted';
 
 interface CalcRequest {
-  isBuy: boolean;
+  symbol: string;
+  side: 'buy' | 'sell';
   price: number;
-  qty: number;
+  quantity: number;
   instrumentType: InstrumentType;
-  buyPrice: number | null;
+  listingType: ListingType;
+  entityType: TraderType;
+  buyPricePerShare?: number;
   holdingDays: number | null;
-  traderType: TraderType;
 }
 
 interface BreakdownRow {
+  id: string;
   charge: string;
   rate: number | null;
   amount: number;
-}
-
-interface CalcResponse {
-  transactionValue: number;
-  totalAmountToPay?: number;
-  netProceeds?: number;
-  totalCharges?: number;
-  totalDeductions?: number;
-  cgtAmount?: number;
-  cgtRate?: number;
-  breakdown: BreakdownRow[];
 }
 
 interface FormState {
@@ -38,6 +31,27 @@ interface FormState {
   holdingDays: number;
   buyPrice: number;
   traderType: TraderType;
+}
+
+interface FeeBackendResponse {
+  grossValue: number;
+  brokerCommission: number;
+  sebonTransactionFee: number;
+  dpCharge: number;
+  cgtRate: number;
+  cgtAmount: number;
+  totalFeesExcludingCgt: number;
+  totalBuyInCost: number;
+  netSellProceeds: number;
+}
+
+interface CalcResponse {
+  transactionValue: number;
+  totalAmountToPay: number;
+  netProceeds: number;
+  totalCharges: number;
+  totalDeductions: number;
+  breakdown: BreakdownRow[];
 }
 
 const THEME_KEY = 'nepse.calculator.theme';
@@ -74,8 +88,8 @@ export function BuySellCalculator() {
     return `${normalized.toFixed(2)}%`;
   }, []);
 
-  const endpointUrl = '/api/calculate-nepse-cost';
-  // TODO: Change endpointUrl if backend route differs in your environment.
+  const endpointUrl = '/api/fees/calculate';
+  // TODO: Change endpointUrl only if your backend route differs.
 
   const handleSubmit = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
@@ -85,13 +99,15 @@ export function BuySellCalculator() {
 
       try {
         const payload: CalcRequest = {
-          isBuy: form.side === 'buy',
+          symbol: 'NEPSE',
+          side: form.side,
           price: form.price,
-          qty: form.qty,
+          quantity: form.qty,
           instrumentType: form.instrumentType,
-          buyPrice: form.side === 'sell' ? form.buyPrice : null,
+          listingType: 'listed',
+          entityType: form.traderType,
           holdingDays: form.side === 'sell' ? form.holdingDays : null,
-          traderType: form.traderType,
+          buyPricePerShare: form.side === 'sell' ? form.buyPrice : undefined,
         };
 
         const res = await fetch(endpointUrl, {
@@ -104,8 +120,68 @@ export function BuySellCalculator() {
           throw new Error('Unable to calculate charges.');
         }
 
-        const data = (await res.json()) as CalcResponse;
-        setResult(data);
+        const data = (await res.json()) as FeeBackendResponse;
+        const transactionValue = data.grossValue;
+        const totalAmountToPay = data.totalBuyInCost;
+        const netProceeds = data.netSellProceeds;
+        const totalCharges = data.totalFeesExcludingCgt;
+        const totalDeductions = data.totalFeesExcludingCgt + data.cgtAmount;
+        const brokerRate = transactionValue > 0 ? data.brokerCommission / transactionValue : 0;
+        const sebonRate = transactionValue > 0 ? data.sebonTransactionFee / transactionValue : 0;
+
+        const breakdown: BreakdownRow[] = [
+          {
+            id: 'tx',
+            charge: 'Transaction Value',
+            rate: null,
+            amount: transactionValue,
+          },
+          {
+            id: 'broker',
+            charge: 'Broker Commission (total)',
+            rate: brokerRate,
+            amount: data.brokerCommission,
+          },
+          {
+            id: 'sebon',
+            charge: 'SEBON Transaction Fee',
+            rate: sebonRate,
+            amount: data.sebonTransactionFee,
+          },
+          {
+            id: 'dp',
+            charge: 'DP Transfer Charge',
+            rate: null,
+            amount: data.dpCharge,
+          },
+        ];
+
+        if (form.side === 'sell') {
+          breakdown.push({
+            id: 'cgt',
+            charge: 'CGT',
+            rate: data.cgtRate,
+            amount: data.cgtAmount,
+          });
+        }
+
+        breakdown.push({
+          id: 'total',
+          charge: form.side === 'buy' ? 'Total Amount to Pay' : 'Net Proceeds',
+          rate: null,
+          amount: form.side === 'buy' ? totalAmountToPay : netProceeds,
+        });
+
+        const normalized: CalcResponse = {
+          transactionValue,
+          totalAmountToPay,
+          netProceeds,
+          totalCharges,
+          totalDeductions,
+          breakdown,
+        };
+
+        setResult(normalized);
       } catch (e) {
         setResult(null);
         setError(e instanceof Error ? e.message : 'Calculation failed.');
@@ -119,28 +195,24 @@ export function BuySellCalculator() {
   const summary = useMemo(() => {
     if (!result) return null;
 
-    const totalChargesFromBreakdown = result.breakdown
-      .filter((row) => row.charge !== 'Transaction Value')
-      .reduce((sum, row) => sum + row.amount, 0);
-
     if (form.side === 'buy') {
       return {
         primaryLabel: 'Total Amount to Pay',
-        primaryValue: result.totalAmountToPay ?? result.transactionValue + totalChargesFromBreakdown,
+        primaryValue: result.totalAmountToPay,
         secondLabel: 'Transaction Value',
         secondValue: result.transactionValue,
         thirdLabel: 'Total Charges',
-        thirdValue: result.totalCharges ?? totalChargesFromBreakdown,
+        thirdValue: result.totalCharges,
       };
     }
 
     return {
       primaryLabel: 'Net Proceeds',
-      primaryValue: result.netProceeds ?? result.transactionValue - totalChargesFromBreakdown,
+      primaryValue: result.netProceeds,
       secondLabel: 'Transaction Value',
       secondValue: result.transactionValue,
       thirdLabel: 'Total Deductions (fees + CGT)',
-      thirdValue: result.totalDeductions ?? totalChargesFromBreakdown,
+      thirdValue: result.totalDeductions,
     };
   }, [form.side, result]);
 
@@ -306,7 +378,7 @@ export function BuySellCalculator() {
                   </thead>
                   <tbody>
                     {result?.breakdown.map((row) => (
-                      <tr key={`${row.charge}-${row.amount}`}>
+                      <tr key={row.id}>
                         <td>{row.charge}</td>
                         <td>{formatRate(row.rate)}</td>
                         <td>{formatMoney(row.amount)}</td>
