@@ -1,5 +1,9 @@
 import { CalculatorWidget } from '../components/CalculatorWidget';
 
-export function CalculatorPage() {
-  return <CalculatorWidget />;
+interface CalculatorPageProps {
+  tradeLocked: boolean;
+}
+
+export function CalculatorPage({ tradeLocked }: CalculatorPageProps) {
+  return <CalculatorWidget tradeLocked={tradeLocked} />;
 }

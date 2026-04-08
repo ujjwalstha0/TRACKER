@@ -1,6 +1,10 @@
 import { useMemo, useState } from 'react';
 
-export function SimulationPage() {
+interface SimulationPageProps {
+  tradeLocked: boolean;
+}
+
+export function SimulationPage({ tradeLocked }: SimulationPageProps) {
   const [checks, setChecks] = useState({
     context: true,
     trigger: false,
@@ -66,20 +70,41 @@ export function SimulationPage() {
 
       <article className="panel checklist-panel">
         <h3>Pre-Trade Discipline Gate</h3>
+        {tradeLocked ? <p className="down">Trade lock is active after max daily loss. Review only, no new setups.</p> : null}
         <label>
-          <input type="checkbox" checked={checks.context} onChange={(e) => setChecks({ ...checks, context: e.target.checked })} />
+          <input
+            type="checkbox"
+            checked={checks.context}
+            disabled={tradeLocked}
+            onChange={(e) => setChecks({ ...checks, context: e.target.checked })}
+          />
           Sector and index context agree with trade direction
         </label>
         <label>
-          <input type="checkbox" checked={checks.trigger} onChange={(e) => setChecks({ ...checks, trigger: e.target.checked })} />
+          <input
+            type="checkbox"
+            checked={checks.trigger}
+            disabled={tradeLocked}
+            onChange={(e) => setChecks({ ...checks, trigger: e.target.checked })}
+          />
           Entry trigger and invalidation level are defined
         </label>
         <label>
-          <input type="checkbox" checked={checks.risk} onChange={(e) => setChecks({ ...checks, risk: e.target.checked })} />
+          <input
+            type="checkbox"
+            checked={checks.risk}
+            disabled={tradeLocked}
+            onChange={(e) => setChecks({ ...checks, risk: e.target.checked })}
+          />
           Position size keeps risk below 2% of account
         </label>
         <label>
-          <input type="checkbox" checked={checks.plan} onChange={(e) => setChecks({ ...checks, plan: e.target.checked })} />
+          <input
+            type="checkbox"
+            checked={checks.plan}
+            disabled={tradeLocked}
+            onChange={(e) => setChecks({ ...checks, plan: e.target.checked })}
+          />
           Profit booking plan is written before order
         </label>
       </article>

@@ -14,7 +14,11 @@ const defaultInput: FeeCalculationInput = {
   buyPricePerShare: 500,
 };
 
-export function CalculatorWidget() {
+interface CalculatorWidgetProps {
+  tradeLocked: boolean;
+}
+
+export function CalculatorWidget({ tradeLocked }: CalculatorWidgetProps) {
   const [input, setInput] = useState<FeeCalculationInput>(defaultInput);
   const [result, setResult] = useState<FeeCalculationResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -51,6 +55,7 @@ export function CalculatorWidget() {
       <div className="panel-head">
         <h2>Trade Cost + CGT Desk</h2>
         <p>{titleAmount}</p>
+        {tradeLocked ? <p className="down">Daily loss lock is active. New trade calculations are paused.</p> : null}
       </div>
 
       <form className="calculator-grid" onSubmit={onSubmit}>
@@ -116,8 +121,8 @@ export function CalculatorWidget() {
           />
         </label>
 
-        <button className="cta" type="submit" disabled={loading}>
-          {loading ? 'Calculating...' : 'Compute Charges'}
+        <button className="cta" type="submit" disabled={loading || tradeLocked}>
+          {tradeLocked ? 'Locked by Risk Rule' : loading ? 'Calculating...' : 'Compute Charges'}
         </button>
       </form>
 

@@ -142,10 +142,8 @@ nav {
 }
 
 .topbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
+  display: grid;
+  gap: 12px;
 }
 
 .topbar h1 {
@@ -162,6 +160,53 @@ nav {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.controls-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  gap: 10px;
+  align-items: end;
+}
+
+.inline-input {
+  display: flex;
+  gap: 8px;
+}
+
+.inline-input .cta {
+  min-width: 68px;
+}
+
+.holiday-wrap {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.holiday-chip {
+  border: 1px solid var(--stroke);
+  background: var(--bg-soft);
+  border-radius: 999px;
+  padding: 4px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+}
+
+.holiday-chip button {
+  border: 1px solid var(--stroke);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  line-height: 1;
+  width: 17px;
+  height: 17px;
+  padding: 0;
 }
 
 .chip {
@@ -485,8 +530,11 @@ select {
   }
 
   .topbar {
-    flex-direction: column;
     align-items: flex-start;
+  }
+
+  .controls-grid {
+    grid-template-columns: 1fr;
   }
 
   .grid-layout,
