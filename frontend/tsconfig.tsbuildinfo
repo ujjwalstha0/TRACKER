@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/types.ts","./src/components/calculatorwidget.tsx","./src/components/tradejournaltable.tsx","./src/components/watchlisttable.tsx","./src/lib/api.ts","./src/pages/calculatorpage.tsx","./src/pages/dashboardpage.tsx","./src/pages/journalpage.tsx","./src/pages/simulationpage.tsx","./src/pages/watchlistpage.tsx"],"version":"5.9.3"}
