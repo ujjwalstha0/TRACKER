@@ -169,6 +169,19 @@ export interface ChangePasswordPayload {
   newPassword: string;
 }
 
+export type TradingSignalKind = 'BUY' | 'SELL' | 'HOLD';
+export type TradingSignalConfidence = 'HIGH' | 'MEDIUM' | 'LOW';
+
+export interface TradingSignalResponse {
+  signal: TradingSignalKind;
+  confidence: TradingSignalConfidence;
+  buyScore: number;
+  sellScore: number;
+  strength: number;
+  reasons: string[];
+  recommendedAction: string;
+}
+
 export interface HoldingRow {
   id: number;
   symbol: string;

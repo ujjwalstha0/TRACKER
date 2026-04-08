@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ApexAxisChartSeries, ApexOptions } from 'apexcharts';
 import ReactApexChart from 'react-apexcharts';
 import { useNavigate, useParams } from 'react-router-dom';
-import { fetchIndicators, fetchWatchlist } from '../../lib/api';
-import { IndicatorsResponse, WatchlistApiRow } from '../../types';
+import { fetchIndicators, fetchSignal, fetchWatchlist } from '../../lib/api';
+import { confidenceBadgeClass, signalBadgeClass } from '../../lib/signal-ui';
+import { IndicatorsResponse, TradingSignalResponse, WatchlistApiRow } from '../../types';
 
 const INTERVALS = ['1m', '5m', '15m', '1h', '1d'] as const;
 type Interval = (typeof INTERVALS)[number];
@@ -34,6 +35,7 @@ export function ChartDeskTerminalPage() {
   const [showBollinger, setShowBollinger] = useState(true);
   const [showVwap, setShowVwap] = useState(false);
   const [payload, setPayload] = useState<IndicatorsResponse | null>(null);
+  const [signal, setSignal] = useState<TradingSignalResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -81,6 +83,29 @@ export function ChartDeskTerminalPage() {
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (!selectedSymbol) {
+      setSignal(null);
+      return;
+    }
+
+    let active = true;
+
+    fetchSignal(selectedSymbol)
+      .then((response) => {
+        if (!active) return;
+        setSignal(response);
+      })
+      .catch(() => {
+        if (!active) return;
+        setSignal(null);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [selectedSymbol]);
 
   const priceSeries = useMemo(() => {
     if (!payload) return [] as ApexAxisChartSeries;
@@ -290,6 +315,31 @@ export function ChartDeskTerminalPage() {
         <p className="text-xs uppercase tracking-[0.22em] text-zinc-500">Technical Workspace</p>
         <h1 className="text-2xl font-semibold text-white">Chart Desk</h1>
       </header>
+
+      <section className="terminal-card space-y-3 p-5">
+        <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Pro Trader Signal</p>
+        {signal ? (
+          <>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={`rounded-lg border px-4 py-2 text-xl font-bold uppercase tracking-wide ${signalBadgeClass(signal.signal)}`}>
+                {signal.signal}
+              </span>
+              <span className={`rounded-lg border px-3 py-1 text-xs font-semibold uppercase tracking-wide ${confidenceBadgeClass(signal.confidence)}`}>
+                {signal.confidence}
+              </span>
+            </div>
+            <p className="text-sm font-medium text-zinc-200">
+              {signal.signal} ({signal.confidence}) - {signal.reasons.join(' + ') || 'No strong reasons'}
+            </p>
+            <p className="text-xs text-zinc-500">Recommended Action: {signal.recommendedAction}</p>
+          </>
+        ) : (
+          <p className="text-sm text-zinc-500">Signal unavailable for the selected symbol.</p>
+        )}
+        <p className="text-xs text-zinc-500">
+          Signals for analysis only. Not financial advice. Past performance ≠ future results.
+        </p>
+      </section>
 
       <section className="terminal-card space-y-4 p-5">
         <div className="grid gap-3 xl:grid-cols-[1.8fr_0.7fr_0.6fr]">

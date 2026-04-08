@@ -11,6 +11,7 @@ import { PortfolioModule } from './portfolio/portfolio.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ReportsModule } from './reports/reports.module';
 import { ScrapeModule } from './scrape/scrape.module';
+import { SignalModule } from './signal/signal.module';
 import { SimulationModule } from './simulation/simulation.module';
 import { TradeEntity } from './trades/trade.entity';
 import { TradesModule } from './trades/trades.module';
@@ -42,6 +43,7 @@ import { WatchlistModule } from './watchlist/watchlist.module';
     IndicesModule,
     OhlcModule,
     IndicatorsModule,
+    SignalModule,
     ScrapeModule,
     SimulationModule,
     ReportsModule,

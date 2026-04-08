@@ -6,6 +6,7 @@ import { CalculatorTerminalPage } from './components/terminal/CalculatorTerminal
 import { ChartDeskTerminalPage } from './components/terminal/ChartDeskTerminalPage';
 import { LiveMarketTerminalPage } from './components/terminal/LiveMarketTerminalPage';
 import { PortfolioTerminalPage } from './components/terminal/PortfolioTerminalPage';
+import { SignalDashboardTerminalPage } from './components/terminal/SignalDashboardTerminalPage';
 import { TradeJournalTerminalPage } from './components/terminal/TradeJournalTerminalPage';
 import { fetchMe } from './lib/api';
 import { clearAuthSession, getAuthToken, getStoredUser, setAuthSession } from './lib/auth';
@@ -20,6 +21,7 @@ interface NavItem {
 const PUBLIC_NAV = [
   { to: '/', label: 'Buy/Sell Calc', end: true },
   { to: '/live-market', label: 'Live Market' },
+  { to: '/signal-dashboard', label: 'Signals' },
 ] as NavItem[];
 
 const PRIVATE_NAV = [
@@ -198,6 +200,7 @@ export default function App() {
             <Routes>
               <Route path="/" element={<CalculatorTerminalPage />} />
               <Route path="/live-market" element={<LiveMarketTerminalPage />} />
+              <Route path="/signal-dashboard" element={<SignalDashboardTerminalPage />} />
               <Route
                 path="/chart-desk"
                 element={

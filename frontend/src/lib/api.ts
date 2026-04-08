@@ -12,6 +12,7 @@ import {
   OtpDispatchResponse,
   OhlcCandle,
   PortfolioResponse,
+  TradingSignalResponse,
   TradeRow,
   WatchlistApiRow,
 } from '../types';
@@ -196,6 +197,20 @@ export async function fetchIndicators(symbol: string, interval = '1d', limit = 2
   const res = await fetch(`${API_BASE}/indicators?${params.toString()}`);
   if (!res.ok) {
     throw new Error('Failed to load indicators');
+  }
+
+  return res.json();
+}
+
+export async function fetchSignal(symbol: string): Promise<TradingSignalResponse> {
+  const params = new URLSearchParams({
+    symbol: symbol.trim().toUpperCase(),
+  });
+
+  const res = await fetch(`${API_BASE}/signal?${params.toString()}`);
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string | string[] };
+    throw new Error(parseErrorMessage(body, 'Failed to load trading signal'));
   }
 
   return res.json();
