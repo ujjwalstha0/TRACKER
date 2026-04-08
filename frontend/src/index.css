@@ -1,0 +1,39 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+
+  body {
+    @apply bg-terminal-bg text-terminal-text font-sans antialiased;
+  }
+}
+
+@layer components {
+  .terminal-card {
+    @apply rounded-xl border border-terminal-border bg-terminal-panel shadow-terminal;
+  }
+
+  .terminal-pill {
+    @apply rounded-md border border-terminal-border bg-terminal-panelSoft px-3 py-1 text-xs font-medium text-terminal-muted;
+  }
+
+  .terminal-input {
+    @apply w-full rounded-lg border border-terminal-border bg-black/60 px-3 py-2 text-sm text-terminal-text outline-none transition focus:border-terminal-amber;
+  }
+
+  .terminal-btn {
+    @apply rounded-lg border border-terminal-border bg-terminal-panelSoft px-3 py-2 text-sm font-semibold text-white transition hover:border-terminal-amber;
+  }
+
+  .terminal-btn-primary {
+    @apply rounded-lg border border-terminal-amber bg-terminal-amber/20 px-4 py-2 text-sm font-semibold text-white transition hover:bg-terminal-amber/30;
+  }
+}
