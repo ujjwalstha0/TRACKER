@@ -14,25 +14,28 @@ export default function App() {
 
   return (
     <div className={dark ? 'app-shell theme-dark' : 'app-shell'}>
-      <header className="app-header">
+      <header className="top-nav card-lite">
         <div className="brand-block">
           <span className="brand-tag">NEPSE EXECUTION DESK</span>
-          <h1>Personal Trade Cost & Exit Simulator</h1>
-          <p>Professional buy/sell cost clarity and target/stop-loss outcome preview for equity trades.</p>
+          <strong>Personal Trade Cost Terminal</strong>
         </div>
+        <nav className="tab-nav">
+          <NavLink to="/" end className={({ isActive }) => (isActive ? 'tab active' : 'tab')}>
+            Buy/Sell Calculator
+          </NavLink>
+          <NavLink to="/pl-simulator" className={({ isActive }) => (isActive ? 'tab active' : 'tab')}>
+            P/L Simulator
+          </NavLink>
+        </nav>
         <button className="theme-btn" onClick={() => setDark((v) => !v)} type="button">
           {dark ? 'Light Mode' : 'Dark Mode'}
         </button>
       </header>
 
-      <nav className="tab-nav">
-        <NavLink to="/" end className={({ isActive }) => (isActive ? 'tab active' : 'tab')}>
-          Buy/Sell Calculator
-        </NavLink>
-        <NavLink to="/pl-simulator" className={({ isActive }) => (isActive ? 'tab active' : 'tab')}>
-          P/L Simulator
-        </NavLink>
-      </nav>
+      <section className="hero-head">
+        <h1>Personal Trade Cost & Exit Simulator</h1>
+        <p>Professional buy/sell clarity with detailed charge math and scenario outcomes for equity trades.</p>
+      </section>
 
       <main>
         <Routes>
@@ -41,6 +44,11 @@ export default function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
+
+      <footer className="app-footer card-lite">
+        <span>Private use only • Backend-only scraping • Data updates by your own VPS jobs</span>
+        <span>Built for NEPSE equity execution decisions</span>
+      </footer>
     </div>
   );
 }

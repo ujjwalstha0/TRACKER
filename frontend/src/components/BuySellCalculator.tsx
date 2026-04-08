@@ -4,18 +4,18 @@ import { NepseCostResponse } from '../types';
 
 interface CalculatorFormState {
   side: 'buy' | 'sell';
-  price: number;
-  qty: number;
-  holdingDays: number;
-  buyPrice: number;
+  price: string;
+  qty: string;
+  holdingDays: string;
+  buyPrice: string;
 }
 
 const defaultState: CalculatorFormState = {
   side: 'buy',
-  price: 850,
-  qty: 100,
-  holdingDays: 180,
-  buyPrice: 650,
+  price: '',
+  qty: '',
+  holdingDays: '',
+  buyPrice: '',
 };
 
 export function BuySellCalculator() {
@@ -44,17 +44,30 @@ export function BuySellCalculator() {
       setError('');
 
       try {
-        if (form.side === 'sell' && form.buyPrice <= 0) {
+        const price = Number(form.price);
+        const qty = Number(form.qty);
+        const holdingDays = Number(form.holdingDays);
+        const buyPrice = Number(form.buyPrice);
+
+        if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(qty) || qty <= 0) {
+          throw new Error('Price and quantity must be valid positive numbers.');
+        }
+
+        if (form.side === 'sell' && (!Number.isFinite(buyPrice) || buyPrice <= 0)) {
           throw new Error('Original buy price is required for sell CGT calculation.');
+        }
+
+        if (form.side === 'sell' && (!Number.isFinite(holdingDays) || holdingDays < 0)) {
+          throw new Error('Holding days must be a valid number for sell calculation.');
         }
 
         const data = await calculateNepseCost({
           isBuy: form.side === 'buy',
-          price: form.price,
-          qty: form.qty,
+          price,
+          qty,
           instrumentType: 'equity',
-          buyPrice: form.side === 'sell' ? form.buyPrice : null,
-          holdingDays: form.side === 'sell' ? form.holdingDays : null,
+          buyPrice: form.side === 'sell' ? buyPrice : null,
+          holdingDays: form.side === 'sell' ? holdingDays : null,
           traderType: 'individual',
         });
         setResult(data);
@@ -96,7 +109,10 @@ export function BuySellCalculator() {
     if (!result) return [];
 
     const transactionValue = result.transactionValue;
-    const taxableGain = form.side === 'sell' ? Math.max(0, (form.price - form.buyPrice) * form.qty) : 0;
+    const sellPrice = Number(form.price) || 0;
+    const qty = Number(form.qty) || 0;
+    const buyPrice = Number(form.buyPrice) || 0;
+    const taxableGain = form.side === 'sell' ? Math.max(0, (sellPrice - buyPrice) * qty) : 0;
 
     return result.breakdown
       .filter((row) => row.charge !== 'Transaction Value')
@@ -184,7 +200,7 @@ export function BuySellCalculator() {
             step="0.01"
             placeholder="850.00"
             value={form.price}
-            onChange={(e) => setForm((old) => ({ ...old, price: Number(e.target.value) }))}
+            onChange={(e) => setForm((old) => ({ ...old, price: e.target.value }))}
             required
           />
         </div>
@@ -198,7 +214,7 @@ export function BuySellCalculator() {
             type="number"
             placeholder="100"
             value={form.qty}
-            onChange={(e) => setForm((old) => ({ ...old, qty: Number(e.target.value) }))}
+            onChange={(e) => setForm((old) => ({ ...old, qty: e.target.value }))}
             required
           />
         </div>
@@ -215,7 +231,7 @@ export function BuySellCalculator() {
                 step="0.01"
                 placeholder="650.00"
                 value={form.buyPrice}
-                onChange={(e) => setForm((old) => ({ ...old, buyPrice: Number(e.target.value) }))}
+                onChange={(e) => setForm((old) => ({ ...old, buyPrice: e.target.value }))}
                 required
               />
             </div>
@@ -229,7 +245,7 @@ export function BuySellCalculator() {
                 type="number"
                 placeholder="180"
                 value={form.holdingDays}
-                onChange={(e) => setForm((old) => ({ ...old, holdingDays: Number(e.target.value) }))}
+                onChange={(e) => setForm((old) => ({ ...old, holdingDays: e.target.value }))}
                 required
               />
               <small className="subtle">CGT 7.5% for &le;365 days, 5% for &gt;365 days on positive gain.</small>

@@ -1,0 +1,37 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Price {
+  id        BigInt    @id @default(autoincrement())
+  symbol    String    @unique @db.VarChar(20)
+  company   String?   @db.VarChar(255)
+  sector    String?   @db.VarChar(100)
+  ltp       Decimal   @db.Decimal(18, 4)
+  change    Decimal?  @db.Decimal(18, 4)
+  changePct Decimal?  @db.Decimal(10, 4)
+  open      Decimal?  @db.Decimal(18, 4)
+  high      Decimal?  @db.Decimal(18, 4)
+  low       Decimal?  @db.Decimal(18, 4)
+  volume    BigInt?
+  turnover  Decimal?  @db.Decimal(22, 4)
+  savedAt   DateTime  @default(now())
+
+  @@index([savedAt])
+}
+
+model IndexValue {
+  id        BigInt   @id @default(autoincrement())
+  indexName String   @unique @db.VarChar(80)
+  value     Decimal  @db.Decimal(18, 4)
+  change    Decimal  @db.Decimal(18, 4)
+  changePct Decimal  @db.Decimal(10, 4)
+  savedAt   DateTime @default(now())
+
+  @@index([savedAt])
+}
