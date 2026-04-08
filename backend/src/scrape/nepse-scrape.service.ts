@@ -63,16 +63,17 @@ export class NepseScrapeService {
       await this.prisma.price.upsert({
         where: { symbol: row.symbol },
         update: {
-          company: row.company,
-          sector: row.sector,
+          // Keep previously known metadata/stats when the upstream feed omits them.
+          company: row.company ?? undefined,
+          sector: row.sector ?? undefined,
           ltp: row.ltp,
-          change: row.change,
-          changePct: row.changePct,
-          open: row.open,
-          high: row.high,
-          low: row.low,
-          volume: row.volume,
-          turnover: row.turnover,
+          change: row.change ?? undefined,
+          changePct: row.changePct ?? undefined,
+          open: row.open ?? undefined,
+          high: row.high ?? undefined,
+          low: row.low ?? undefined,
+          volume: row.volume ?? undefined,
+          turnover: row.turnover ?? undefined,
           savedAt,
         },
         create: {
