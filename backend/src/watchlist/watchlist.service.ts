@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 interface WatchlistRow {
@@ -17,10 +17,22 @@ interface WatchlistRow {
 
 @Injectable()
 export class WatchlistService {
+  private readonly logger = new Logger(WatchlistService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   async getWatchlist(): Promise<WatchlistRow[]> {
-    const rows = await this.prisma.price.findMany({ orderBy: { symbol: 'asc' } });
+    let rows;
+    try {
+      rows = await this.prisma.price.findMany({ orderBy: { symbol: 'asc' } });
+    } catch (error) {
+      if (this.isMissingTableError(error)) {
+        this.logger.warn('Price table missing. Returning empty watchlist until bootstrap completes.');
+        return [];
+      }
+
+      throw error;
+    }
 
     return rows.map((row) => ({
       symbol: row.symbol,
@@ -41,5 +53,14 @@ export class WatchlistService {
     if (value === null || value === undefined) return null;
     const parsed = Number(String(value));
     return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  private isMissingTableError(error: unknown): boolean {
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error as { code?: string }).code === 'P2021'
+    );
   }
 }

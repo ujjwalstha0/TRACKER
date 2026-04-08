@@ -3,6 +3,7 @@ import { ConfigType } from '@nestjs/config';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import { AnyNode } from 'domhandler';
+import * as https from 'https';
 import scrapeConfig from '../config/scrape.config';
 import { PrismaService } from '../prisma/prisma.service';
 import { IndexValueDto, PriceDto } from './scrape.types';
@@ -92,12 +93,40 @@ export class NepseScrapeService {
   }
 
   private async fetchHtml(url: string): Promise<string> {
-    const res = await axios.get<string>(url, {
-      responseType: 'text',
-      timeout: 20000,
-    });
+    try {
+      const res = await axios.get<string>(url, {
+        responseType: 'text',
+        timeout: 20000,
+      });
 
-    return res.data;
+      return res.data;
+    } catch (error) {
+      if (!this.shouldRetryWithInsecureTls(error)) {
+        throw error;
+      }
+
+      this.logger.warn(`TLS verification failed for ${url}. Retrying scrape request with insecure TLS.`);
+      const retryRes = await axios.get<string>(url, {
+        responseType: 'text',
+        timeout: 20000,
+        httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+      });
+
+      return retryRes.data;
+    }
+  }
+
+  private shouldRetryWithInsecureTls(error: unknown): boolean {
+    if (!axios.isAxiosError(error)) return false;
+
+    const code = error.code?.toUpperCase();
+    return (
+      code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' ||
+      code === 'SELF_SIGNED_CERT_IN_CHAIN' ||
+      code === 'DEPTH_ZERO_SELF_SIGNED_CERT' ||
+      code === 'CERT_HAS_EXPIRED' ||
+      code === 'ERR_TLS_CERT_ALTNAME_INVALID'
+    );
   }
 
   private parseTodayPrices(html: string): PriceDto[] {
