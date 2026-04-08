@@ -120,12 +120,14 @@ export class NepseScrapeService {
     if (!axios.isAxiosError(error)) return false;
 
     const code = error.code?.toUpperCase();
+    const message = (error.message ?? '').toLowerCase();
     return (
       code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' ||
       code === 'SELF_SIGNED_CERT_IN_CHAIN' ||
       code === 'DEPTH_ZERO_SELF_SIGNED_CERT' ||
       code === 'CERT_HAS_EXPIRED' ||
-      code === 'ERR_TLS_CERT_ALTNAME_INVALID'
+      code === 'ERR_TLS_CERT_ALTNAME_INVALID' ||
+      message.includes('unable to verify the first certificate')
     );
   }
 
