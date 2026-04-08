@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Navigate, NavLink, Route, Routes } from 'react-router-dom';
+import { AccountSecurityTerminalPage } from './components/terminal/AccountSecurityTerminalPage';
 import { AuthTerminalPage } from './components/terminal/AuthTerminalPage';
 import { CalculatorTerminalPage } from './components/terminal/CalculatorTerminalPage';
 import { ChartDeskTerminalPage } from './components/terminal/ChartDeskTerminalPage';
@@ -25,6 +26,7 @@ const PRIVATE_NAV = [
   { to: '/chart-desk', label: 'Chart Desk' },
   { to: '/portfolio', label: 'Portfolio' },
   { to: '/trade-journal', label: 'Trade Journal' },
+  { to: '/account-security', label: 'Security' },
 ] as NavItem[];
 
 function ProtectedPage({ user, children }: { user: AuthUser | null; children: JSX.Element }) {
@@ -80,11 +82,11 @@ export default function App() {
 
   return (
     <div className={shellClassName}>
-      <header className="fixed inset-x-0 top-0 z-50 border-b border-zinc-700/70 bg-black/95 px-4 py-3 backdrop-blur">
+      <header className="fixed inset-x-0 top-0 z-50 border-b border-zinc-700/70 bg-gradient-to-r from-black via-zinc-950 to-black px-4 py-3 backdrop-blur">
         <div className="mx-auto flex max-w-[1800px] items-center gap-4">
           <div className="min-w-[160px] sm:min-w-[220px] lg:w-[20%] lg:min-w-[220px]">
-            <p className="text-xs uppercase tracking-[0.25em] text-zinc-500">NEPSE EXECUTION DESK</p>
-            <p className="mt-1 text-sm font-semibold text-white">Institutional Personal Terminal</p>
+            <p className="text-[10px] uppercase tracking-[0.35em] text-zinc-500">NEPSE EXECUTION DESK</p>
+            <p className="mt-1 text-sm font-semibold text-white">Professional Trading Terminal</p>
           </div>
 
           <nav className="flex flex-1 items-center gap-2 overflow-x-auto lg:hidden">
@@ -145,7 +147,7 @@ export default function App() {
         </div>
       </header>
 
-      <aside className="fixed bottom-0 left-0 top-[73px] hidden w-[20%] min-w-[220px] border-r border-zinc-800 bg-zinc-950/95 p-4 lg:block">
+      <aside className="fixed bottom-0 left-0 top-[73px] hidden w-[20%] min-w-[220px] border-r border-zinc-800 bg-gradient-to-b from-zinc-950/95 to-black/95 p-4 lg:block">
         <div className="space-y-2">
           {PUBLIC_NAV.map((item) => (
             <NavLink
@@ -241,6 +243,14 @@ export default function App() {
                 }
               />
               <Route
+                path="/account-security"
+                element={
+                  <ProtectedPage user={user}>
+                    <AccountSecurityTerminalPage user={user as AuthUser} />
+                  </ProtectedPage>
+                }
+              />
+              <Route
                 path="/pl-simulator"
                 element={
                   user ? <Navigate to="/trade-journal" replace /> : <Navigate to="/auth" replace />
@@ -264,6 +274,10 @@ export default function App() {
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           )}
+
+          <footer className="mt-8 border-t border-zinc-800/80 pt-4 text-center text-xs uppercase tracking-[0.2em] text-zinc-500">
+            Developed by InfoShare Company
+          </footer>
         </div>
       </main>
     </div>

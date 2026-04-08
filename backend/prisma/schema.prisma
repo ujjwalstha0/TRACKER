@@ -71,6 +71,7 @@ model Holding {
 model AuthOtp {
   id        BigInt   @id @default(autoincrement())
   email     String   @db.VarChar(255)
+  requestIp String?  @db.VarChar(64)
   purpose   String   @db.VarChar(40)
   codeHash  String   @db.VarChar(128)
   payload   Json?
@@ -80,6 +81,7 @@ model AuthOtp {
   createdAt DateTime @default(now())
 
   @@index([email, purpose, createdAt])
+  @@index([requestIp, purpose, createdAt])
   @@index([expiresAt])
 }
 

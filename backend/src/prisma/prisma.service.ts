@@ -135,6 +135,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       CREATE TABLE IF NOT EXISTS "AuthOtp" (
         "id" BIGSERIAL PRIMARY KEY,
         "email" VARCHAR(255) NOT NULL,
+        "requestIp" VARCHAR(64),
         "purpose" VARCHAR(40) NOT NULL,
         "codeHash" VARCHAR(128) NOT NULL,
         "payload" JSONB,
@@ -144,8 +145,12 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
     `);
+    await this.$executeRawUnsafe('ALTER TABLE "AuthOtp" ADD COLUMN IF NOT EXISTS "requestIp" VARCHAR(64);');
     await this.$executeRawUnsafe(
       'CREATE INDEX IF NOT EXISTS "AuthOtp_email_purpose_createdAt_idx" ON "AuthOtp" ("email", "purpose", "createdAt");',
+    );
+    await this.$executeRawUnsafe(
+      'CREATE INDEX IF NOT EXISTS "AuthOtp_requestIp_purpose_createdAt_idx" ON "AuthOtp" ("requestIp", "purpose", "createdAt");',
     );
     await this.$executeRawUnsafe(
       'CREATE INDEX IF NOT EXISTS "AuthOtp_expiresAt_idx" ON "AuthOtp" ("expiresAt");',

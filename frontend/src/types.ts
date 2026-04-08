@@ -158,6 +158,17 @@ export interface AuthResponse {
   user: AuthUser;
 }
 
+export interface OtpDispatchResponse {
+  message: string;
+  cooldownSeconds: number;
+  expiresInMinutes: number;
+}
+
+export interface ChangePasswordPayload {
+  currentPassword: string;
+  newPassword: string;
+}
+
 export interface HoldingRow {
   id: number;
   symbol: string;

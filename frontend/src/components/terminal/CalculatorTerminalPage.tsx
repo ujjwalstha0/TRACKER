@@ -21,8 +21,10 @@ interface ScenarioResult {
   stopLoss: number | null;
   targetNet: number | null;
   targetPnl: number | null;
+  targetBreakdown: NepseCostResponse['breakdown'] | null;
   stopNet: number | null;
   stopPnl: number | null;
+  stopBreakdown: NepseCostResponse['breakdown'] | null;
 }
 
 const INITIAL_FORM: FormState = {
@@ -51,6 +53,18 @@ function formatRate(rate: number | null): string {
   return `${percentage.toFixed(3)}%`;
 }
 
+function explainCharge(charge: string): string {
+  const normalized = charge.toLowerCase();
+  if (normalized.includes('broker')) return 'broker commission charged by broker slab';
+  if (normalized.includes('sebon')) return 'regulatory fee charged by SEBON';
+  if (normalized.includes('dp')) return 'fixed demat participant charge';
+  if (normalized.includes('cgt')) return 'capital gains tax for sell transactions';
+  if (normalized.includes('turnover') || normalized.includes('transaction')) return 'price x quantity';
+  if (normalized.includes('net')) return 'amount credited after all deductions';
+  if (normalized.includes('total')) return 'sum of all applicable charges';
+  return 'exchange/broker rule-based charge';
+}
+
 export function CalculatorTerminalPage() {
   const [form, setForm] = useState<FormState>(INITIAL_FORM);
   const [watchlist, setWatchlist] = useState<WatchlistApiRow[]>([]);
@@ -65,16 +79,20 @@ export function CalculatorTerminalPage() {
       .catch(() => setWatchlist([]));
   }, []);
 
-  const applySymbol = (symbol: string) => {
+  const applySymbol = (symbolInput: string) => {
+    const lookup = symbolInput.trim().toLowerCase();
+    const selected = watchlist.find(
+      (item) => item.symbol.toLowerCase() === lookup || (item.company ?? '').toLowerCase() === lookup,
+    );
+
     setForm((previous) => {
-      const selected = watchlist.find((item) => item.symbol === symbol);
       if (!selected) {
-        return { ...previous, symbol };
+        return { ...previous, symbol: symbolInput.trim().toUpperCase() };
       }
 
       return {
         ...previous,
-        symbol,
+        symbol: selected.symbol,
         price: String(selected.ltp),
         buyPrice: previous.buyPrice || String(selected.ltp),
       };
@@ -192,8 +210,10 @@ export function CalculatorTerminalPage() {
             stopLoss: hasStop ? stopLoss : null,
             targetNet: targetResult?.netProceeds ?? null,
             targetPnl: targetResult?.netProceeds !== null && targetResult?.netProceeds !== undefined ? targetResult.netProceeds - buyIn : null,
+            targetBreakdown: targetResult?.breakdown ?? null,
             stopNet: stopResult?.netProceeds ?? null,
             stopPnl: stopResult?.netProceeds !== null && stopResult?.netProceeds !== undefined ? stopResult.netProceeds - buyIn : null,
+            stopBreakdown: stopResult?.breakdown ?? null,
           });
         } else {
           setScenario(null);
@@ -223,19 +243,28 @@ export function CalculatorTerminalPage() {
             <label htmlFor="symbol" className="text-xs font-medium uppercase tracking-wide text-zinc-400">
               Company Quick Fill
             </label>
-            <select
+            <input
               id="symbol"
+              list="watchlist-symbol-options"
               value={form.symbol}
               onChange={(event) => applySymbol(event.target.value)}
               className="terminal-input"
-            >
-              <option value="">Select symbol from live feed</option>
+              placeholder="Type symbol or company name"
+            />
+            <datalist id="watchlist-symbol-options">
               {watchlist.map((item) => (
                 <option key={item.symbol} value={item.symbol}>
                   {item.symbol} {item.company ? `- ${item.company}` : ''}
                 </option>
               ))}
-            </select>
+              {watchlist
+                .filter((item) => item.company)
+                .map((item) => (
+                  <option key={`${item.symbol}-company`} value={item.company ?? ''}>
+                    {item.company} ({item.symbol})
+                  </option>
+                ))}
+            </datalist>
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
@@ -434,6 +463,7 @@ export function CalculatorTerminalPage() {
               <tr>
                 <th className="px-5 py-3 text-left">Charge</th>
                 <th className="px-5 py-3 text-left">Rate</th>
+                <th className="px-5 py-3 text-left">How it is charged</th>
                 <th className="px-5 py-3 text-right">Amount</th>
               </tr>
             </thead>
@@ -443,12 +473,13 @@ export function CalculatorTerminalPage() {
                   <tr key={`${line.charge}-${index}`} className="hover:bg-zinc-900/80">
                     <td className="px-5 py-3 text-zinc-300">{line.charge}</td>
                     <td className="px-5 py-3 text-zinc-400 font-mono">{formatRate(line.rate)}</td>
+                    <td className="px-5 py-3 text-zinc-500">{explainCharge(line.charge)}</td>
                     <td className="px-5 py-3 text-right font-mono font-semibold text-white">₹ {formatMoney(line.amount)}</td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={3} className="px-5 py-8 text-center text-zinc-500">
+                  <td colSpan={4} className="px-5 py-8 text-center text-zinc-500">
                     Run calculation to see detailed charges.
                   </td>
                 </tr>
@@ -457,6 +488,78 @@ export function CalculatorTerminalPage() {
           </table>
         </div>
       </section>
+
+      {scenario ? (
+        <section className="grid gap-4 xl:grid-cols-2">
+          <article className="terminal-card overflow-hidden">
+            <header className="border-b border-zinc-800 px-5 py-4">
+              <h3 className="text-sm font-semibold text-white">Target Sell Charge Breakdown</h3>
+            </header>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-zinc-800 text-sm">
+                <thead className="bg-black/40 text-xs uppercase tracking-wide text-zinc-500">
+                  <tr>
+                    <th className="px-4 py-3 text-left">Charge</th>
+                    <th className="px-4 py-3 text-left">Rate</th>
+                    <th className="px-4 py-3 text-right">Amount</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-900/80">
+                  {scenario.targetBreakdown?.length ? (
+                    scenario.targetBreakdown.map((line, index) => (
+                      <tr key={`target-${line.charge}-${index}`}>
+                        <td className="px-4 py-3 text-zinc-300">{line.charge}</td>
+                        <td className="px-4 py-3 font-mono text-zinc-400">{formatRate(line.rate)}</td>
+                        <td className="px-4 py-3 text-right font-mono text-zinc-100">₹ {formatMoney(line.amount)}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={3} className="px-4 py-6 text-center text-zinc-500">
+                        Set a target price to see details.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </article>
+
+          <article className="terminal-card overflow-hidden">
+            <header className="border-b border-zinc-800 px-5 py-4">
+              <h3 className="text-sm font-semibold text-white">Stop-Loss Sell Charge Breakdown</h3>
+            </header>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-zinc-800 text-sm">
+                <thead className="bg-black/40 text-xs uppercase tracking-wide text-zinc-500">
+                  <tr>
+                    <th className="px-4 py-3 text-left">Charge</th>
+                    <th className="px-4 py-3 text-left">Rate</th>
+                    <th className="px-4 py-3 text-right">Amount</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-900/80">
+                  {scenario.stopBreakdown?.length ? (
+                    scenario.stopBreakdown.map((line, index) => (
+                      <tr key={`stop-${line.charge}-${index}`}>
+                        <td className="px-4 py-3 text-zinc-300">{line.charge}</td>
+                        <td className="px-4 py-3 font-mono text-zinc-400">{formatRate(line.rate)}</td>
+                        <td className="px-4 py-3 text-right font-mono text-zinc-100">₹ {formatMoney(line.amount)}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={3} className="px-4 py-6 text-center text-zinc-500">
+                        Set a stop-loss price to see details.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </article>
+        </section>
+      ) : null}
     </section>
   );
 }

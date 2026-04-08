@@ -11,3 +11,9 @@ export interface AuthTokenResponse {
     displayName: string | null;
   };
 }
+
+export interface OtpDispatchResponse {
+  message: string;
+  cooldownSeconds: number;
+  expiresInMinutes: number;
+}

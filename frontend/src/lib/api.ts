@@ -1,6 +1,7 @@
 import {
   AuthResponse,
   AuthUser,
+  ChangePasswordPayload,
   CreateHoldingPayload,
   FeeCalculationInput,
   FeeCalculationResult,
@@ -8,6 +9,7 @@ import {
   IndicatorsResponse,
   NepseCostRequest,
   NepseCostResponse,
+  OtpDispatchResponse,
   OhlcCandle,
   PortfolioResponse,
   TradeRow,
@@ -27,6 +29,30 @@ function parseErrorMessage(body: { message?: string | string[] }, fallback: stri
   }
 
   return fallback;
+}
+
+class ApiError extends Error {
+  retryAfterSeconds?: number;
+
+  constructor(message: string, retryAfterSeconds?: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
+async function throwApiError(res: Response, fallback: string): Promise<never> {
+  const body = (await res.json().catch(() => ({}))) as {
+    message?: string | string[];
+    retryAfterSeconds?: number;
+  };
+
+  const retryAfter =
+    typeof body.retryAfterSeconds === 'number' && Number.isFinite(body.retryAfterSeconds)
+      ? body.retryAfterSeconds
+      : undefined;
+
+  throw new ApiError(parseErrorMessage(body, fallback), retryAfter);
 }
 
 function authHeaderOrThrow(): Record<string, string> {
@@ -179,7 +205,7 @@ export async function requestRegisterOtp(payload: {
   email: string;
   password: string;
   displayName?: string;
-}): Promise<{ message: string }> {
+}): Promise<OtpDispatchResponse> {
   const res = await fetch(`${API_BASE}/auth/register/request-otp`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -187,8 +213,7 @@ export async function requestRegisterOtp(payload: {
   });
 
   if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { message?: string | string[] };
-    throw new Error(parseErrorMessage(body, 'Failed to send registration OTP'));
+    return throwApiError(res, 'Failed to send registration OTP');
   }
 
   return res.json();
@@ -229,7 +254,7 @@ export async function loginUser(payload: { email: string; password: string }): P
 
 export async function requestForgotPasswordOtp(payload: {
   email: string;
-}): Promise<{ message: string }> {
+}): Promise<OtpDispatchResponse> {
   const res = await fetch(`${API_BASE}/auth/password/forgot/request-otp`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -237,8 +262,7 @@ export async function requestForgotPasswordOtp(payload: {
   });
 
   if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { message?: string | string[] };
-    throw new Error(parseErrorMessage(body, 'Failed to send password reset OTP'));
+    return throwApiError(res, 'Failed to send password reset OTP');
   }
 
   return res.json();
@@ -256,11 +280,31 @@ export async function resetForgotPassword(payload: {
   });
 
   if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { message?: string | string[] };
-    throw new Error(parseErrorMessage(body, 'Failed to reset password'));
+    return throwApiError(res, 'Failed to reset password');
   }
 
   return res.json();
+}
+
+export async function changePassword(payload: ChangePasswordPayload): Promise<{ message: string }> {
+  const res = await fetch(`${API_BASE}/auth/password/change`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaderOrThrow(),
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    return handleProtectedFailure(res);
+  }
+
+  return res.json();
+}
+
+export function getRetryAfterSeconds(error: unknown): number | undefined {
+  return error instanceof ApiError ? error.retryAfterSeconds : undefined;
 }
 
 export async function fetchMe(): Promise<AuthUser> {

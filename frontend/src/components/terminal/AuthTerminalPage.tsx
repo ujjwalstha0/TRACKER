@@ -1,5 +1,6 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import {
+  getRetryAfterSeconds,
   loginUser,
   requestForgotPasswordOtp,
   requestRegisterOtp,
@@ -23,9 +24,23 @@ export function AuthTerminalPage({ onAuthenticated }: AuthTerminalPageProps) {
   const [newPassword, setNewPassword] = useState('');
   const [registerOtpSent, setRegisterOtpSent] = useState(false);
   const [forgotOtpSent, setForgotOtpSent] = useState(false);
+  const [registerCooldownSeconds, setRegisterCooldownSeconds] = useState(0);
+  const [forgotCooldownSeconds, setForgotCooldownSeconds] = useState(0);
   const [loading, setLoading] = useState(false);
   const [info, setInfo] = useState('');
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (registerCooldownSeconds <= 0) return;
+    const timer = setTimeout(() => setRegisterCooldownSeconds((old) => Math.max(0, old - 1)), 1000);
+    return () => clearTimeout(timer);
+  }, [registerCooldownSeconds]);
+
+  useEffect(() => {
+    if (forgotCooldownSeconds <= 0) return;
+    const timer = setTimeout(() => setForgotCooldownSeconds((old) => Math.max(0, old - 1)), 1000);
+    return () => clearTimeout(timer);
+  }, [forgotCooldownSeconds]);
 
   const switchMode = (nextMode: Mode) => {
     setMode(nextMode);
@@ -36,12 +51,37 @@ export function AuthTerminalPage({ onAuthenticated }: AuthTerminalPageProps) {
     if (nextMode !== 'register') {
       setRegisterOtpSent(false);
       setDisplayName('');
+      setRegisterCooldownSeconds(0);
     }
 
     if (nextMode !== 'forgot') {
       setForgotOtpSent(false);
       setNewPassword('');
+      setForgotCooldownSeconds(0);
     }
+  };
+
+  const handleRegisterOtpRequest = async () => {
+    const response = await requestRegisterOtp({
+      email,
+      password,
+      displayName: displayName || undefined,
+    });
+
+    setRegisterOtpSent(true);
+    setRegisterCooldownSeconds(response.cooldownSeconds);
+    setInfo(
+      `${response.message} OTP valid for ${response.expiresInMinutes} minute${response.expiresInMinutes === 1 ? '' : 's'}.`,
+    );
+  };
+
+  const handleForgotOtpRequest = async () => {
+    const response = await requestForgotPasswordOtp({ email });
+    setForgotOtpSent(true);
+    setForgotCooldownSeconds(response.cooldownSeconds);
+    setInfo(
+      `${response.message} OTP valid for ${response.expiresInMinutes} minute${response.expiresInMinutes === 1 ? '' : 's'}.`,
+    );
   };
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
@@ -59,13 +99,7 @@ export function AuthTerminalPage({ onAuthenticated }: AuthTerminalPageProps) {
 
       if (mode === 'register') {
         if (!registerOtpSent) {
-          await requestRegisterOtp({
-            email,
-            password,
-            displayName: displayName || undefined,
-          });
-          setRegisterOtpSent(true);
-          setInfo('OTP sent to your email. Enter it below to finish account creation.');
+          await handleRegisterOtpRequest();
         } else {
           const response = await verifyRegisterOtp({
             email,
@@ -78,9 +112,7 @@ export function AuthTerminalPage({ onAuthenticated }: AuthTerminalPageProps) {
       }
 
       if (!forgotOtpSent) {
-        const response = await requestForgotPasswordOtp({ email });
-        setForgotOtpSent(true);
-        setInfo(response.message);
+        await handleForgotOtpRequest();
       } else {
         const response = await resetForgotPassword({
           email,
@@ -96,6 +128,16 @@ export function AuthTerminalPage({ onAuthenticated }: AuthTerminalPageProps) {
         setMode('login');
       }
     } catch (authError) {
+      const retryAfter = getRetryAfterSeconds(authError);
+      if (retryAfter) {
+        if (mode === 'register') {
+          setRegisterCooldownSeconds(retryAfter);
+        }
+        if (mode === 'forgot') {
+          setForgotCooldownSeconds(retryAfter);
+        }
+      }
+
       setError(authError instanceof Error ? authError.message : 'Authentication failed.');
     } finally {
       setLoading(false);
@@ -149,6 +191,7 @@ export function AuthTerminalPage({ onAuthenticated }: AuthTerminalPageProps) {
             onChange={(event) => setEmail(event.target.value)}
             className="terminal-input"
             placeholder="name@example.com"
+            disabled={(mode === 'register' && registerOtpSent) || (mode === 'forgot' && forgotOtpSent)}
             required
           />
         </div>
@@ -219,6 +262,54 @@ export function AuthTerminalPage({ onAuthenticated }: AuthTerminalPageProps) {
                   ? 'Reset Password'
                   : 'Send Password Reset OTP'}
         </button>
+
+        {mode === 'register' && registerOtpSent ? (
+          <button
+            type="button"
+            onClick={() => {
+              setLoading(true);
+              setError('');
+              setInfo('');
+              void handleRegisterOtpRequest()
+                .catch((authError) => {
+                  const retryAfter = getRetryAfterSeconds(authError);
+                  if (retryAfter) setRegisterCooldownSeconds(retryAfter);
+                  setError(authError instanceof Error ? authError.message : 'Failed to resend OTP.');
+                })
+                .finally(() => setLoading(false));
+            }}
+            disabled={loading || registerCooldownSeconds > 0}
+            className="terminal-btn w-full"
+          >
+            {registerCooldownSeconds > 0
+              ? `Resend OTP in ${registerCooldownSeconds}s`
+              : 'Resend Registration OTP'}
+          </button>
+        ) : null}
+
+        {mode === 'forgot' && forgotOtpSent ? (
+          <button
+            type="button"
+            onClick={() => {
+              setLoading(true);
+              setError('');
+              setInfo('');
+              void handleForgotOtpRequest()
+                .catch((authError) => {
+                  const retryAfter = getRetryAfterSeconds(authError);
+                  if (retryAfter) setForgotCooldownSeconds(retryAfter);
+                  setError(authError instanceof Error ? authError.message : 'Failed to resend OTP.');
+                })
+                .finally(() => setLoading(false));
+            }}
+            disabled={loading || forgotCooldownSeconds > 0}
+            className="terminal-btn w-full"
+          >
+            {forgotCooldownSeconds > 0
+              ? `Resend OTP in ${forgotCooldownSeconds}s`
+              : 'Resend Password Reset OTP'}
+          </button>
+        ) : null}
 
         {info ? <p className="text-sm font-medium text-terminal-green">{info}</p> : null}
         {error ? <p className="text-sm font-medium text-terminal-red">{error}</p> : null}

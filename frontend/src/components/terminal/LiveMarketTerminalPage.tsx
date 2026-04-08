@@ -18,6 +18,12 @@ function formatNumber(value: number | null, digits = 2): string {
   }).format(value);
 }
 
+function formatSignedPercent(value: number | null): string {
+  if (value === null) return '--';
+  const sign = value > 0 ? '+' : '';
+  return `${sign}${formatNumber(value)}%`;
+}
+
 export function LiveMarketTerminalPage() {
   const navigate = useNavigate();
 
@@ -87,8 +93,8 @@ export function LiveMarketTerminalPage() {
         return sortDirection === 'asc' ? compare : -compare;
       }
 
-      const aValue = (a[sortKey] ?? 0) as number;
-      const bValue = (b[sortKey] ?? 0) as number;
+      const aValue = ((a[sortKey] ?? Number.NEGATIVE_INFINITY) as number);
+      const bValue = ((b[sortKey] ?? Number.NEGATIVE_INFINITY) as number);
       const diff = aValue - bValue;
       return sortDirection === 'asc' ? diff : -diff;
     });
@@ -128,8 +134,7 @@ export function LiveMarketTerminalPage() {
               <p className="text-xs uppercase tracking-wide text-zinc-500">{index.indexName}</p>
               <p className="mt-3 text-2xl font-bold text-white font-mono">₹ {formatNumber(index.value)}</p>
               <p className={up ? 'mt-2 font-mono text-sm text-terminal-green' : 'mt-2 font-mono text-sm text-terminal-red'}>
-                {up ? '+' : ''}
-                {formatNumber(index.change_pct)}%
+                {formatSignedPercent(index.change_pct)}
               </p>
             </article>
           );
@@ -179,6 +184,7 @@ export function LiveMarketTerminalPage() {
             <thead className="bg-black/40 text-xs uppercase tracking-wide text-zinc-500">
               <tr>
                 <th className="px-4 py-3 text-left">Symbol</th>
+                <th className="px-4 py-3 text-left">Company</th>
                 <th className="px-4 py-3 text-right">LTP</th>
                 <th className="px-4 py-3 text-right">Change %</th>
                 <th className="px-4 py-3 text-right">Volume</th>
@@ -189,24 +195,31 @@ export function LiveMarketTerminalPage() {
             <tbody className="divide-y divide-zinc-900/80">
               {currentRows.length ? (
                 currentRows.map((row) => {
+                  const hasChange = row.change_pct !== null;
                   const up = (row.change_pct ?? 0) >= 0;
                   return (
                     <tr key={row.symbol} className="cursor-pointer hover:bg-zinc-900/80" onClick={() => navigate(`/chart-desk/${row.symbol}`)}>
                       <td className="px-4 py-3 font-mono font-semibold text-white">{row.symbol}</td>
+                      <td className="px-4 py-3 text-zinc-300">{row.company ?? 'Unknown company'}</td>
                       <td className="px-4 py-3 text-right font-mono text-zinc-200">{formatNumber(row.ltp)}</td>
-                      <td className={up ? 'px-4 py-3 text-right font-mono text-terminal-green' : 'px-4 py-3 text-right font-mono text-terminal-red'}>
-                        {up ? '+' : ''}
-                        {formatNumber(row.change_pct)}%
+                      <td className={
+                        !hasChange
+                          ? 'px-4 py-3 text-right font-mono text-zinc-500'
+                          : up
+                            ? 'px-4 py-3 text-right font-mono text-terminal-green'
+                            : 'px-4 py-3 text-right font-mono text-terminal-red'
+                      }>
+                        {formatSignedPercent(row.change_pct)}
                       </td>
-                      <td className="px-4 py-3 text-right font-mono text-zinc-300">{formatNumber(row.volume, 0)}</td>
-                      <td className="px-4 py-3 text-right font-mono text-zinc-300">{formatNumber(row.turnover)}</td>
-                      <td className="px-4 py-3 text-zinc-400">{row.sector ?? 'N/A'}</td>
+                      <td className="px-4 py-3 text-right font-mono text-zinc-300">{row.volume === null ? '--' : formatNumber(row.volume, 0)}</td>
+                      <td className="px-4 py-3 text-right font-mono text-zinc-300">{row.turnover === null ? '--' : formatNumber(row.turnover)}</td>
+                      <td className="px-4 py-3 text-zinc-400">{row.sector ?? 'Unspecified'}</td>
                     </tr>
                   );
                 })
               ) : (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-zinc-500">
+                  <td colSpan={7} className="px-4 py-8 text-center text-zinc-500">
                     No rows found for the current filter.
                   </td>
                 </tr>

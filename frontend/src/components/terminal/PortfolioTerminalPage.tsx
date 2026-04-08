@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
-import { createHolding, fetchPortfolio, removeHolding } from '../../lib/api';
-import { PortfolioResponse } from '../../types';
+import { createHolding, fetchPortfolio, fetchWatchlist, removeHolding } from '../../lib/api';
+import { PortfolioResponse, WatchlistApiRow } from '../../types';
 
 interface HoldingForm {
   symbol: string;
@@ -31,6 +31,7 @@ function formatMoney(value: number | null): string {
 
 export function PortfolioTerminalPage() {
   const [portfolio, setPortfolio] = useState<PortfolioResponse | null>(null);
+  const [watchlist, setWatchlist] = useState<WatchlistApiRow[]>([]);
   const [form, setForm] = useState<HoldingForm>(INITIAL_FORM);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -54,6 +55,30 @@ export function PortfolioTerminalPage() {
   useEffect(() => {
     void loadPortfolio();
   }, [loadPortfolio]);
+
+  useEffect(() => {
+    fetchWatchlist()
+      .then((rows) => setWatchlist(rows))
+      .catch(() => setWatchlist([]));
+  }, []);
+
+  const applySymbolInput = (symbolInput: string) => {
+    const lookup = symbolInput.trim().toLowerCase();
+    const selected = watchlist.find(
+      (item) => item.symbol.toLowerCase() === lookup || (item.company ?? '').toLowerCase() === lookup,
+    );
+
+    if (!selected) {
+      setForm((old) => ({ ...old, symbol: symbolInput.toUpperCase() }));
+      return;
+    }
+
+    setForm((old) => ({
+      ...old,
+      symbol: selected.symbol,
+      buyPrice: old.buyPrice || String(selected.ltp),
+    }));
+  };
 
   const submitHolding = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -140,12 +165,27 @@ export function PortfolioTerminalPage() {
           </label>
           <input
             id="holdingSymbol"
+            list="portfolio-symbol-options"
             value={form.symbol}
-            onChange={(event) => setForm((old) => ({ ...old, symbol: event.target.value.toUpperCase() }))}
+            onChange={(event) => applySymbolInput(event.target.value)}
             className="terminal-input font-mono"
-            placeholder="NABIL"
+            placeholder="Type symbol or company"
             required
           />
+          <datalist id="portfolio-symbol-options">
+            {watchlist.map((item) => (
+              <option key={item.symbol} value={item.symbol}>
+                {item.symbol} {item.company ? `- ${item.company}` : ''}
+              </option>
+            ))}
+            {watchlist
+              .filter((item) => item.company)
+              .map((item) => (
+                <option key={`${item.symbol}-company`} value={item.company ?? ''}>
+                  {item.company} ({item.symbol})
+                </option>
+              ))}
+          </datalist>
         </div>
 
         <div className="space-y-1">
