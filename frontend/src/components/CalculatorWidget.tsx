@@ -2,60 +2,91 @@ import { FormEvent, useMemo, useState } from 'react';
 import { calculateFees } from '../lib/api';
 import { FeeCalculationInput, FeeCalculationResult } from '../types';
 
-const defaultInput: FeeCalculationInput = {
+interface CalculatorFormState {
+  symbol: string;
+  instrumentType: FeeCalculationInput['instrumentType'];
+  entityType: FeeCalculationInput['entityType'];
+  listingType: FeeCalculationInput['listingType'];
+  buyPrice: number;
+  sellPrice: number;
+  quantity: number;
+  holdingDays: number;
+}
+
+const defaultInput: CalculatorFormState = {
   symbol: 'NABIL',
-  side: 'buy',
   instrumentType: 'equity',
   entityType: 'individual',
   listingType: 'listed',
-  price: 550,
+  buyPrice: 550,
+  sellPrice: 575,
   quantity: 100,
   holdingDays: 120,
-  buyPricePerShare: 500,
 };
 
-interface CalculatorWidgetProps {
-  tradeLocked: boolean;
-}
-
-export function CalculatorWidget({ tradeLocked }: CalculatorWidgetProps) {
-  const [input, setInput] = useState<FeeCalculationInput>(defaultInput);
-  const [result, setResult] = useState<FeeCalculationResult | null>(null);
+export function CalculatorWidget() {
+  const [input, setInput] = useState<CalculatorFormState>(defaultInput);
+  const [buyResult, setBuyResult] = useState<FeeCalculationResult | null>(null);
+  const [sellResult, setSellResult] = useState<FeeCalculationResult | null>(null);
   const [loading, setLoading] = useState(false);
-  const [capital, setCapital] = useState(500000);
-  const [riskPercent, setRiskPercent] = useState(1.5);
-  const [entryPrice, setEntryPrice] = useState(550);
-  const [stopPrice, setStopPrice] = useState(532);
 
-  const titleAmount = useMemo(() => {
-    if (!result) return '-';
-    return input.side === 'buy'
-      ? `Buy-In NPR ${result.totalBuyInCost.toLocaleString()}`
-      : `Net Proceeds NPR ${result.netSellProceeds.toLocaleString()}`;
-  }, [input.side, result]);
+  const summary = useMemo(() => {
+    if (!buyResult || !sellResult) {
+      return {
+        totalBuy: 0,
+        totalSell: 0,
+        net: 0,
+      };
+    }
+
+    const totalBuy = buyResult.totalBuyInCost;
+    const totalSell = sellResult.netSellProceeds;
+    return {
+      totalBuy,
+      totalSell,
+      net: totalSell - totalBuy,
+    };
+  }, [buyResult, sellResult]);
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
     setLoading(true);
     try {
-      const data = await calculateFees(input);
-      setResult(data);
+      const commonFields = {
+        symbol: input.symbol,
+        instrumentType: input.instrumentType,
+        entityType: input.entityType,
+        listingType: input.listingType,
+        quantity: input.quantity,
+      };
+
+      const buyPayload: FeeCalculationInput = {
+        ...commonFields,
+        side: 'buy',
+        price: input.buyPrice,
+      };
+
+      const sellPayload: FeeCalculationInput = {
+        ...commonFields,
+        side: 'sell',
+        price: input.sellPrice,
+        holdingDays: input.holdingDays,
+        buyPricePerShare: input.buyPrice,
+      };
+
+      const [buyData, sellData] = await Promise.all([calculateFees(buyPayload), calculateFees(sellPayload)]);
+      setBuyResult(buyData);
+      setSellResult(sellData);
     } finally {
       setLoading(false);
     }
   };
 
-  const riskAmount = (capital * riskPercent) / 100;
-  const riskPerShare = Math.max(0.01, entryPrice - stopPrice);
-  const maxShares = Math.floor(riskAmount / riskPerShare);
-  const capitalNeeded = maxShares * entryPrice;
-
   return (
     <section className="panel calculator-panel">
       <div className="panel-head">
-        <h2>Trade Cost + CGT Desk</h2>
-        <p>{titleAmount}</p>
-        {tradeLocked ? <p className="down">Daily loss lock is active. New trade calculations are paused.</p> : null}
+        <h2>Stock Buy vs Sell Net Calculator</h2>
+        <p>Enter buy and planned sell price to see complete cost, net proceeds, and net outcome after all charges.</p>
       </div>
 
       <form className="calculator-grid" onSubmit={onSubmit}>
@@ -65,16 +96,13 @@ export function CalculatorWidget({ tradeLocked }: CalculatorWidgetProps) {
         </label>
 
         <label>
-          Side
-          <select value={input.side} onChange={(e) => setInput({ ...input, side: e.target.value as 'buy' | 'sell' })}>
-            <option value="buy">Buy</option>
-            <option value="sell">Sell</option>
-          </select>
+          Buy Price
+          <input type="number" value={input.buyPrice} onChange={(e) => setInput({ ...input, buyPrice: Number(e.target.value) })} />
         </label>
 
         <label>
-          Price
-          <input type="number" value={input.price} onChange={(e) => setInput({ ...input, price: Number(e.target.value) })} />
+          Planned Sell Price
+          <input type="number" value={input.sellPrice} onChange={(e) => setInput({ ...input, sellPrice: Number(e.target.value) })} />
         </label>
 
         <label>
@@ -109,71 +137,56 @@ export function CalculatorWidget({ tradeLocked }: CalculatorWidgetProps) {
 
         <label>
           Holding Days
-          <input type="number" value={input.holdingDays ?? 0} onChange={(e) => setInput({ ...input, holdingDays: Number(e.target.value) })} />
+          <input type="number" value={input.holdingDays ?? 120} onChange={(e) => setInput({ ...input, holdingDays: Number(e.target.value) })} />
         </label>
 
-        <label>
-          Buy Price/Share
-          <input
-            type="number"
-            value={input.buyPricePerShare ?? 0}
-            onChange={(e) => setInput({ ...input, buyPricePerShare: Number(e.target.value) })}
-          />
-        </label>
-
-        <button className="cta" type="submit" disabled={loading || tradeLocked}>
-          {tradeLocked ? 'Locked by Risk Rule' : loading ? 'Calculating...' : 'Compute Charges'}
+        <button className="cta" type="submit" disabled={loading}>
+          {loading ? 'Calculating...' : 'Calculate Net Buy & Sell'}
         </button>
       </form>
 
-      {result && (
-        <div className="breakdown-grid">
-          <article>
-            <h3>Core</h3>
-            <p>Gross: NPR {result.grossValue.toLocaleString()}</p>
-            <p>Broker Commission: NPR {result.brokerCommission.toLocaleString()}</p>
-            <p>SEBON Tx Fee: NPR {result.sebonTransactionFee.toLocaleString()}</p>
-            <p>DP Charge: NPR {result.dpCharge.toLocaleString()}</p>
-            <p>CGT: NPR {result.cgtAmount.toLocaleString()} ({(result.cgtRate * 100).toFixed(2)}%)</p>
-          </article>
-          <article>
-            <h3>Commission Split</h3>
-            <p>Broker Share: NPR {result.commissionSplit.broker.toLocaleString()}</p>
-            <p>NEPSE Share: NPR {result.commissionSplit.nepse.toLocaleString()}</p>
-            <p>SEBON Inside: NPR {result.commissionSplit.sebonInside.toLocaleString()}</p>
-          </article>
-        </div>
+      {buyResult && sellResult && (
+        <>
+          <div className="result-strip">
+            <article className="panel metric-card">
+              <p>Total Money Needed To Buy</p>
+              <h3>NPR {summary.totalBuy.toLocaleString(undefined, { maximumFractionDigits: 2 })}</h3>
+            </article>
+            <article className="panel metric-card">
+              <p>Money You Receive After Sell</p>
+              <h3>NPR {summary.totalSell.toLocaleString(undefined, { maximumFractionDigits: 2 })}</h3>
+            </article>
+            <article className="panel metric-card">
+              <p>Final Net (After Charges + CGT)</p>
+              <h3 className={summary.net >= 0 ? 'up' : 'down'}>
+                NPR {summary.net.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+              </h3>
+            </article>
+          </div>
+
+          <div className="breakdown-grid">
+            <article>
+              <h3>Buy Side Breakdown</h3>
+              <p>Gross Buy Value: NPR {buyResult.grossValue.toLocaleString()}</p>
+              <p>Broker Commission: NPR {buyResult.brokerCommission.toLocaleString()}</p>
+              <p>SEBON Fee: NPR {buyResult.sebonTransactionFee.toLocaleString()}</p>
+              <p>DP Charge: NPR {buyResult.dpCharge.toLocaleString()}</p>
+              <p>Total Buy Cost: NPR {buyResult.totalBuyInCost.toLocaleString()}</p>
+            </article>
+            <article>
+              <h3>Sell Side Breakdown</h3>
+              <p>Gross Sell Value: NPR {sellResult.grossValue.toLocaleString()}</p>
+              <p>Broker Commission: NPR {sellResult.brokerCommission.toLocaleString()}</p>
+              <p>SEBON Fee: NPR {sellResult.sebonTransactionFee.toLocaleString()}</p>
+              <p>DP Charge: NPR {sellResult.dpCharge.toLocaleString()}</p>
+              <p>
+                CGT: NPR {sellResult.cgtAmount.toLocaleString()} ({(sellResult.cgtRate * 100).toFixed(2)}%)
+              </p>
+              <p>Net Sell Proceeds: NPR {sellResult.netSellProceeds.toLocaleString()}</p>
+            </article>
+          </div>
+        </>
       )}
-
-      <div className="panel risk-panel">
-        <h3>Position Sizing Guardrail</h3>
-        <p>Keep your downside controlled before you place the order.</p>
-        <div className="calculator-grid">
-          <label>
-            Account Capital (NPR)
-            <input type="number" value={capital} onChange={(e) => setCapital(Number(e.target.value))} />
-          </label>
-          <label>
-            Risk % Per Trade
-            <input type="number" value={riskPercent} step="0.1" onChange={(e) => setRiskPercent(Number(e.target.value))} />
-          </label>
-          <label>
-            Planned Entry
-            <input type="number" value={entryPrice} onChange={(e) => setEntryPrice(Number(e.target.value))} />
-          </label>
-          <label>
-            Stop Loss
-            <input type="number" value={stopPrice} onChange={(e) => setStopPrice(Number(e.target.value))} />
-          </label>
-        </div>
-
-        <div className="risk-result">
-          <p>Maximum risk amount: <strong>NPR {riskAmount.toLocaleString()}</strong></p>
-          <p>Risk per share: <strong>NPR {riskPerShare.toFixed(2)}</strong></p>
-          <p>Maximum quantity: <strong>{maxShares.toLocaleString()} shares</strong></p>
-          <p>Capital required: <strong>NPR {capitalNeeded.toLocaleString()}</strong></p>
-        </div>
-      </div>
     </section>
   );
 }
