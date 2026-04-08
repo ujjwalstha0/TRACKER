@@ -10,6 +10,12 @@ interface SimulatorResult {
   costBasis: number;
 }
 
+interface ScenarioBreakdownRow {
+  label: string;
+  formula: string;
+  amount: number;
+}
+
 function estimateHoldingDays(purchasedAt: string | null): number {
   if (!purchasedAt) return 0;
   const start = new Date(purchasedAt);
@@ -60,6 +66,20 @@ export function PLSimulator() {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     }).format(value)}`;
+  }, []);
+
+  const getBreakdownAmount = useCallback((data: NepseCostResponse, charge: string) => {
+    return data.breakdown.find((row) => row.charge === charge)?.amount ?? 0;
+  }, []);
+
+  const getBreakdownRate = useCallback((data: NepseCostResponse, charge: string) => {
+    return data.breakdown.find((row) => row.charge === charge)?.rate ?? null;
+  }, []);
+
+  const formatRate = useCallback((rate: number | null) => {
+    if (rate === null) return '-';
+    const value = rate <= 1 ? rate * 100 : rate;
+    return `${value.toFixed(2)}%`;
   }, []);
 
   const handleSimulate = useCallback(
@@ -122,6 +142,85 @@ export function PLSimulator() {
     },
     [buyPrice, holdingDays, quantity, selectedTrade, stopLossPrice, targetPrice],
   );
+
+  const scenarioRows = useMemo(() => {
+    if (!result) return null;
+
+    const buildRows = (label: 'target' | 'stop', data: NepseCostResponse, exitPrice: number, pnl: number): ScenarioBreakdownRow[] => {
+      const brokerAmount = getBreakdownAmount(data, 'Broker Commission (total)');
+      const sebonAmount = getBreakdownAmount(data, 'SEBON Transaction Fee');
+      const dpAmount = getBreakdownAmount(data, 'DP Transfer Charge');
+      const cgtAmount = getBreakdownAmount(data, 'CGT');
+      const brokerRate = getBreakdownRate(data, 'Broker Commission (total)');
+      const sebonRate = getBreakdownRate(data, 'SEBON Transaction Fee');
+      const cgtRate = getBreakdownRate(data, 'CGT');
+      const taxableGain = Math.max(0, (exitPrice - buyPrice) * quantity);
+      const proceeds = data.netProceeds ?? 0;
+
+      return [
+        {
+          label: 'Gross Sell Value',
+          formula: `${formatMoney(exitPrice)} x ${quantity}`,
+          amount: data.transactionValue,
+        },
+        {
+          label: 'Broker Commission',
+          formula: `${formatMoney(data.transactionValue)} x ${formatRate(brokerRate)}`,
+          amount: brokerAmount,
+        },
+        {
+          label: 'SEBON Fee',
+          formula: `${formatMoney(data.transactionValue)} x ${formatRate(sebonRate)}`,
+          amount: sebonAmount,
+        },
+        {
+          label: 'DP Charge',
+          formula: 'Fixed per sell transaction',
+          amount: dpAmount,
+        },
+        {
+          label: 'Taxable Gain',
+          formula: `max(0, (${formatMoney(exitPrice)} - ${formatMoney(buyPrice)}) x ${quantity})`,
+          amount: taxableGain,
+        },
+        {
+          label: 'CGT',
+          formula: `${formatMoney(taxableGain)} x ${formatRate(cgtRate)}`,
+          amount: cgtAmount,
+        },
+        {
+          label: label === 'target' ? 'Net Proceeds at Target' : 'Net Proceeds at Stop-Loss',
+          formula: 'Gross value - all deductions',
+          amount: proceeds,
+        },
+        {
+          label: 'Cost Basis (Buy Side)',
+          formula: 'From selected/manual buy trade',
+          amount: result.costBasis,
+        },
+        {
+          label: label === 'target' ? 'Profit/Loss at Target' : 'Profit/Loss at Stop-Loss',
+          formula: `${formatMoney(proceeds)} - ${formatMoney(result.costBasis)}`,
+          amount: pnl,
+        },
+      ];
+    };
+
+    return {
+      target: buildRows('target', result.target, targetPrice, result.targetPnL),
+      stop: buildRows('stop', result.stopLoss, stopLossPrice, result.stopLossPnL),
+    };
+  }, [
+    buyPrice,
+    formatMoney,
+    formatRate,
+    getBreakdownAmount,
+    getBreakdownRate,
+    quantity,
+    result,
+    stopLossPrice,
+    targetPrice,
+  ]);
 
   return (
     <section className="card">
@@ -226,30 +325,82 @@ export function PLSimulator() {
         {error ? <p className="error-text">{error}</p> : null}
       </form>
 
-      {result ? (
-        <div className="summary-grid simulator-grid">
-          <article className="summary-card">
-            <p>If exit at target</p>
-            <h3>{formatMoney(result.target.netProceeds ?? 0)}</h3>
-            <small className={result.targetPnL >= 0 ? 'profit' : 'loss'}>
-              {result.targetPnL >= 0 ? 'Profit' : 'Loss'}: {formatMoney(result.targetPnL)}
-            </small>
-          </article>
+      {result && scenarioRows ? (
+        <>
+          <div className="summary-grid simulator-grid">
+            <article className="summary-card">
+              <p>If exit at target</p>
+              <h3>{formatMoney(result.target.netProceeds ?? 0)}</h3>
+              <small className={result.targetPnL >= 0 ? 'profit' : 'loss'}>
+                {result.targetPnL >= 0 ? 'Profit' : 'Loss'}: {formatMoney(result.targetPnL)}
+              </small>
+            </article>
 
-          <article className="summary-card">
-            <p>If exit at stop-loss</p>
-            <h3>{formatMoney(result.stopLoss.netProceeds ?? 0)}</h3>
-            <small className={result.stopLossPnL >= 0 ? 'profit' : 'loss'}>
-              {result.stopLossPnL >= 0 ? 'Profit' : 'Loss'}: {formatMoney(result.stopLossPnL)}
-            </small>
-          </article>
+            <article className="summary-card">
+              <p>If exit at stop-loss</p>
+              <h3>{formatMoney(result.stopLoss.netProceeds ?? 0)}</h3>
+              <small className={result.stopLossPnL >= 0 ? 'profit' : 'loss'}>
+                {result.stopLossPnL >= 0 ? 'Profit' : 'Loss'}: {formatMoney(result.stopLossPnL)}
+              </small>
+            </article>
 
-          <article className="summary-card">
-            <p>Cost basis (from buy trade)</p>
-            <h3>{formatMoney(result.costBasis)}</h3>
-            <small>CGT band: {holdingDays <= 365 ? '7.50%' : '5.00%'}</small>
-          </article>
-        </div>
+            <article className="summary-card">
+              <p>Cost basis (from buy trade)</p>
+              <h3>{formatMoney(result.costBasis)}</h3>
+              <small>CGT band: {holdingDays <= 365 ? '7.50%' : '5.00%'}</small>
+            </article>
+          </div>
+
+          <div className="scenario-grid">
+            <article className="scenario-card">
+              <h3>Target Exit Breakdown</h3>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Step</th>
+                      <th>How</th>
+                      <th>Amount (NPR)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {scenarioRows.target.map((row) => (
+                      <tr key={`target-${row.label}`}>
+                        <td>{row.label}</td>
+                        <td>{row.formula}</td>
+                        <td className={row.label.includes('Profit/Loss') ? (row.amount >= 0 ? 'profit' : 'loss') : ''}>{formatMoney(row.amount)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+
+            <article className="scenario-card">
+              <h3>Stop-Loss Exit Breakdown</h3>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Step</th>
+                      <th>How</th>
+                      <th>Amount (NPR)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {scenarioRows.stop.map((row) => (
+                      <tr key={`stop-${row.label}`}>
+                        <td>{row.label}</td>
+                        <td>{row.formula}</td>
+                        <td className={row.label.includes('Profit/Loss') ? (row.amount >= 0 ? 'profit' : 'loss') : ''}>{formatMoney(row.amount)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+          </div>
+        </>
       ) : null}
     </section>
   );

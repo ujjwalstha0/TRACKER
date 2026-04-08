@@ -92,6 +92,62 @@ export function BuySellCalculator() {
     };
   }, [form.side, result]);
 
+  const detailRows = useMemo(() => {
+    if (!result) return [];
+
+    const transactionValue = result.transactionValue;
+    const taxableGain = form.side === 'sell' ? Math.max(0, (form.price - form.buyPrice) * form.qty) : 0;
+
+    return result.breakdown
+      .filter((row) => row.charge !== 'Transaction Value')
+      .map((row) => {
+        const label = row.charge;
+
+        if (label.includes('Broker Commission')) {
+          return {
+            charge: label,
+            chargedOn: `Transaction Value ${formatMoney(transactionValue)}`,
+            formula: `${formatMoney(transactionValue)} x ${formatRate(row.rate)}`,
+            amount: row.amount,
+          };
+        }
+
+        if (label.includes('SEBON')) {
+          return {
+            charge: label,
+            chargedOn: `Transaction Value ${formatMoney(transactionValue)}`,
+            formula: `${formatMoney(transactionValue)} x ${formatRate(row.rate)}`,
+            amount: row.amount,
+          };
+        }
+
+        if (label.includes('DP')) {
+          return {
+            charge: label,
+            chargedOn: 'Per sell transaction',
+            formula: 'Fixed DP transfer charge',
+            amount: row.amount,
+          };
+        }
+
+        if (label === 'CGT') {
+          return {
+            charge: label,
+            chargedOn: `Taxable gain ${formatMoney(taxableGain)}`,
+            formula: `${formatMoney(taxableGain)} x ${formatRate(row.rate)}`,
+            amount: row.amount,
+          };
+        }
+
+        return {
+          charge: label,
+          chargedOn: '-',
+          formula: '-',
+          amount: row.amount,
+        };
+      });
+  }, [form.buyPrice, form.price, form.qty, form.side, formatMoney, formatRate, result]);
+
   return (
     <section className="card">
       <h2>Buy/Sell Calculator</h2>
@@ -219,6 +275,29 @@ export function BuySellCalculator() {
                   <tr key={`${row.charge}-${idx}`}>
                     <td>{row.charge}</td>
                     <td>{formatRate(row.rate)}</td>
+                    <td>{formatMoney(row.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="table-wrap detail-breakdown">
+            <table>
+              <thead>
+                <tr>
+                  <th>Charge</th>
+                  <th>Charged On</th>
+                  <th>How Calculated</th>
+                  <th>Amount (NPR)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {detailRows.map((row) => (
+                  <tr key={`${row.charge}-${row.formula}`}>
+                    <td>{row.charge}</td>
+                    <td>{row.chargedOn}</td>
+                    <td>{row.formula}</td>
                     <td>{formatMoney(row.amount)}</td>
                   </tr>
                 ))}

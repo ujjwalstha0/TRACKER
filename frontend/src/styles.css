@@ -146,6 +146,10 @@ body {
   font-size: 0.78rem;
 }
 
+.field-group .subtle {
+  margin: 0;
+}
+
 input,
 select {
   width: 100%;
@@ -231,6 +235,10 @@ input[readonly] {
   overflow-x: auto;
 }
 
+.detail-breakdown {
+  margin-top: 10px;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -262,6 +270,29 @@ th {
   grid-template-columns: repeat(3, minmax(210px, 1fr));
 }
 
+.scenario-grid {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.scenario-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel) 92%, var(--accent-soft));
+  padding: 12px;
+}
+
+.scenario-card h3 {
+  margin: 0;
+  font-size: 0.98rem;
+}
+
+.scenario-card .table-wrap {
+  margin-top: 8px;
+}
+
 @media (max-width: 1024px) {
   .app-shell {
     padding: 14px 12px;
@@ -282,6 +313,10 @@ th {
 
   .summary-grid,
   .simulator-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .scenario-grid {
     grid-template-columns: 1fr;
   }
 }
