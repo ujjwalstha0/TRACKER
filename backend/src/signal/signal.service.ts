@@ -1,5 +1,5 @@
-import { BadRequestException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { OhlcService } from '../ohlc/ohlc.service';
 import { SignalInputData, TradingSignalKind, TradingSignalResult } from './signal.types';
 
 const TRADING_SIGNALS = {
@@ -12,24 +12,9 @@ const TRADING_SIGNALS = {
   HOLD: 0,
 } as const;
 
-interface SignalDbRow {
-  symbol: string;
-  close: unknown;
-  ema8: unknown;
-  ema21: unknown;
-  ema20: unknown;
-  ema50: unknown;
-  rsi14: unknown;
-  vwap: unknown;
-  bbUpper: unknown;
-  bbLower: unknown;
-  volume: unknown;
-  avgVolume20: unknown;
-}
-
 @Injectable()
 export class SignalService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly ohlcService: OhlcService) {}
 
   async calculateSignal(symbol: string): Promise<TradingSignalResult> {
     const normalizedSymbol = symbol.trim().toUpperCase();
@@ -37,44 +22,60 @@ export class SignalService {
       throw new BadRequestException('Query param "symbol" is required.');
     }
 
-    let rows: SignalDbRow[];
-    try {
-      rows = (await this.prisma.$queryRawUnsafe(
-        `
-        SELECT
-          symbol,
-          c AS close,
-          ema8,
-          ema21,
-          ema20,
-          ema50,
-          rsi14,
-          vwap,
-          "bbUpper" AS "bbUpper",
-          "bbLower" AS "bbLower",
-          v AS volume,
-          "avgVolume20" AS "avgVolume20"
-        FROM prices
-        WHERE symbol = $1
-        ORDER BY t DESC
-        LIMIT 2
-      `,
-        normalizedSymbol,
-      )) as SignalDbRow[];
-    } catch (error) {
-      if (this.isRawQuerySchemaError(error)) {
-        throw new InternalServerErrorException('Signal columns are missing in prices table.');
-      }
+    const candles = await this.ohlcService.getCandles({
+      symbol: normalizedSymbol,
+      interval: '1d',
+      limit: 220,
+    });
 
-      throw error;
-    }
-
-    if (!rows.length) {
+    if (candles.length < 2) {
       throw new NotFoundException('No signal data found for symbol.');
     }
 
-    const data = this.toSignalInput(rows[0]);
-    const prevData = rows.length > 1 ? this.toSignalInput(rows[1]) : undefined;
+    const closes = candles.map((candle) => candle.c);
+    const highs = candles.map((candle) => candle.h);
+    const lows = candles.map((candle) => candle.l);
+    const volumes = candles.map((candle) => candle.v ?? 0);
+
+    const ema8 = this.calculateEma(closes, 8);
+    const ema21 = this.calculateEma(closes, 21);
+    const ema20 = this.calculateEma(closes, 20);
+    const ema50 = this.calculateEma(closes, 50);
+    const rsi14 = this.calculateRsi(closes, 14);
+    const vwap = this.calculateVwap(highs, lows, closes, volumes);
+    const avgVolume20 = this.calculateSma(volumes, 20);
+    const bollinger = this.calculateBollinger(closes, 20, 2);
+
+    const currentIndex = candles.length - 1;
+    const prevIndex = candles.length - 2;
+
+    const data = this.buildSignalInput({
+      close: closes[currentIndex],
+      ema8: ema8[currentIndex],
+      ema21: ema21[currentIndex],
+      ema20: ema20[currentIndex],
+      ema50: ema50[currentIndex],
+      rsi14: rsi14[currentIndex],
+      vwap: vwap[currentIndex],
+      volume: volumes[currentIndex],
+      avgVolume20: avgVolume20[currentIndex],
+      bbLower: bollinger.lower[currentIndex],
+      bbUpper: bollinger.upper[currentIndex],
+    });
+
+    const prevData = this.buildSignalInput({
+      close: closes[prevIndex],
+      ema8: ema8[prevIndex],
+      ema21: ema21[prevIndex],
+      ema20: ema20[prevIndex],
+      ema50: ema50[prevIndex],
+      rsi14: rsi14[prevIndex],
+      vwap: vwap[prevIndex],
+      volume: volumes[prevIndex],
+      avgVolume20: avgVolume20[prevIndex],
+      bbLower: bollinger.lower[prevIndex],
+      bbUpper: bollinger.upper[prevIndex],
+    });
 
     return this.calculateTradingSignal(data, prevData);
   }
@@ -178,41 +179,155 @@ export class SignalService {
     return actions[strength >= 5 ? 'HIGH' : strength >= 3 ? 'MEDIUM' : 'LOW'] || 'MONITOR';
   }
 
-  private toSignalInput(row: SignalDbRow): SignalInputData {
+  private buildSignalInput(row: {
+    close: number | null;
+    ema8: number | null;
+    ema21: number | null;
+    ema20: number | null;
+    ema50: number | null;
+    rsi14: number | null;
+    vwap: number | null;
+    volume: number | null;
+    avgVolume20: number | null;
+    bbLower: number | null;
+    bbUpper: number | null;
+  }): SignalInputData {
     return {
-      ema8: this.toNumber(row.ema8),
-      ema21: this.toNumber(row.ema21),
-      ema20: this.toNumber(row.ema20),
-      ema50: this.toNumber(row.ema50),
-      rsi14: this.toNumber(row.rsi14),
-      close: this.toNumber(row.close),
-      vwap: this.toNumber(row.vwap),
-      volume: this.toNumber(row.volume),
-      avgVolume20: this.toNumber(row.avgVolume20),
-      bbLower: this.toNumber(row.bbLower),
-      bbUpper: this.toNumber(row.bbUpper),
+      ema8: row.ema8 ?? Number.NaN,
+      ema21: row.ema21 ?? Number.NaN,
+      ema20: row.ema20 ?? Number.NaN,
+      ema50: row.ema50 ?? Number.NaN,
+      rsi14: row.rsi14 ?? Number.NaN,
+      close: row.close ?? Number.NaN,
+      vwap: row.vwap ?? Number.NaN,
+      volume: row.volume ?? 0,
+      avgVolume20: row.avgVolume20 ?? 0,
+      bbLower: row.bbLower ?? Number.NaN,
+      bbUpper: row.bbUpper ?? Number.NaN,
     };
   }
 
-  private toNumber(value: unknown): number {
-    const parsed = Number(String(value));
-    return Number.isFinite(parsed) ? parsed : Number.NaN;
+  private calculateSma(values: number[], period: number): Array<number | null> {
+    const result: Array<number | null> = new Array(values.length).fill(null);
+    if (values.length < period) return result;
+
+    let rollingSum = 0;
+    for (let i = 0; i < values.length; i += 1) {
+      rollingSum += values[i];
+      if (i >= period) {
+        rollingSum -= values[i - period];
+      }
+
+      if (i >= period - 1) {
+        result[i] = rollingSum / period;
+      }
+    }
+
+    return result;
   }
 
-  private isRawQuerySchemaError(error: unknown): boolean {
-    if (typeof error !== 'object' || error === null) {
-      return false;
+  private calculateEma(values: number[], period: number): Array<number | null> {
+    const result: Array<number | null> = new Array(values.length).fill(null);
+    if (values.length < period) return result;
+
+    const multiplier = 2 / (period + 1);
+    const seed = values.slice(0, period).reduce((sum, value) => sum + value, 0) / period;
+
+    result[period - 1] = seed;
+    let previous = seed;
+
+    for (let i = period; i < values.length; i += 1) {
+      previous = (values[i] - previous) * multiplier + previous;
+      result[i] = previous;
     }
 
-    if ('code' in error && (error as { code?: string }).code === 'P2010') {
-      return true;
+    return result;
+  }
+
+  private calculateRsi(values: number[], period: number): Array<number | null> {
+    const result: Array<number | null> = new Array(values.length).fill(null);
+    if (values.length <= period) return result;
+
+    let gainSum = 0;
+    let lossSum = 0;
+
+    for (let i = 1; i <= period; i += 1) {
+      const delta = values[i] - values[i - 1];
+      if (delta > 0) {
+        gainSum += delta;
+      } else {
+        lossSum += Math.abs(delta);
+      }
     }
 
-    if ('message' in error && typeof (error as { message?: string }).message === 'string') {
-      const message = (error as { message: string }).message;
-      return message.includes('column') || message.includes('does not exist') || message.includes('relation');
+    let avgGain = gainSum / period;
+    let avgLoss = lossSum / period;
+    result[period] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+
+    for (let i = period + 1; i < values.length; i += 1) {
+      const delta = values[i] - values[i - 1];
+      const gain = Math.max(delta, 0);
+      const loss = Math.max(-delta, 0);
+
+      avgGain = (avgGain * (period - 1) + gain) / period;
+      avgLoss = (avgLoss * (period - 1) + loss) / period;
+
+      result[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
     }
 
-    return false;
+    return result;
+  }
+
+  private calculateVwap(
+    highs: number[],
+    lows: number[],
+    closes: number[],
+    volumes: number[],
+  ): Array<number | null> {
+    const result: Array<number | null> = new Array(closes.length).fill(null);
+
+    let cumulativePriceVolume = 0;
+    let cumulativeVolume = 0;
+
+    for (let i = 0; i < closes.length; i += 1) {
+      const volume = volumes[i] ?? 0;
+      const typicalPrice = (highs[i] + lows[i] + closes[i]) / 3;
+
+      if (volume > 0) {
+        cumulativePriceVolume += typicalPrice * volume;
+        cumulativeVolume += volume;
+      }
+
+      result[i] = cumulativeVolume > 0 ? cumulativePriceVolume / cumulativeVolume : null;
+    }
+
+    return result;
+  }
+
+  private calculateBollinger(values: number[], period: number, sigmaMultiplier: number): {
+    upper: Array<number | null>;
+    middle: Array<number | null>;
+    lower: Array<number | null>;
+  } {
+    const upper: Array<number | null> = new Array(values.length).fill(null);
+    const middle: Array<number | null> = new Array(values.length).fill(null);
+    const lower: Array<number | null> = new Array(values.length).fill(null);
+
+    if (values.length < period) {
+      return { upper, middle, lower };
+    }
+
+    for (let i = period - 1; i < values.length; i += 1) {
+      const window = values.slice(i - period + 1, i + 1);
+      const mean = window.reduce((sum, value) => sum + value, 0) / period;
+      const variance = window.reduce((sum, value) => sum + (value - mean) ** 2, 0) / period;
+      const deviation = Math.sqrt(variance);
+
+      middle[i] = mean;
+      upper[i] = mean + sigmaMultiplier * deviation;
+      lower[i] = mean - sigmaMultiplier * deviation;
+    }
+
+    return { upper, middle, lower };
   }
 }
