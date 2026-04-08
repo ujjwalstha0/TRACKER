@@ -33,6 +33,7 @@ export function BuySellCalculator() {
   const [result, setResult] = useState<NepseCostResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [liveSelectedSymbol, setLiveSelectedSymbol] = useState('');
   const [liveIndices, setLiveIndices] = useState<IndexApiRow[]>([]);
   const [liveTopSymbols, setLiveTopSymbols] = useState<WatchlistApiRow[]>([]);
   const [liveUpdatedAt, setLiveUpdatedAt] = useState<Date | null>(null);
@@ -66,6 +67,16 @@ export function BuySellCalculator() {
 
     return () => clearInterval(timer);
   }, [loadLivePulse]);
+
+  const applyLiveSymbol = useCallback((row: WatchlistApiRow) => {
+    setForm((old) => ({
+      ...old,
+      side: 'buy',
+      price: String(row.ltp),
+      qty: old.qty || '100',
+    }));
+    setLiveSelectedSymbol(row.symbol);
+  }, []);
 
   const formatMoney = useCallback((value: number) => {
     return `Rs. ${new Intl.NumberFormat('en-IN', {
@@ -239,14 +250,21 @@ export function BuySellCalculator() {
         <div className="mini-live-ticker">
           {liveTopSymbols.length ? (
             liveTopSymbols.map((row) => (
-              <span key={row.symbol}>
+              <button
+                key={row.symbol}
+                type="button"
+                className={liveSelectedSymbol === row.symbol ? 'mini-live-symbol active' : 'mini-live-symbol'}
+                onClick={() => applyLiveSymbol(row)}
+              >
                 <strong>{row.symbol}</strong> {formatCompact(row.ltp)} ({formatCompact(row.change_pct)}%)
-              </span>
+              </button>
             ))
           ) : (
             <span>Top symbols by turnover will appear here.</span>
           )}
         </div>
+
+        {liveSelectedSymbol ? <small className="subtle">Auto-filled from live symbol: {liveSelectedSymbol}</small> : null}
       </section>
 
       <form className="form-grid" onSubmit={handleSubmit}>
