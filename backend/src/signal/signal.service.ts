@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { OhlcService } from '../ohlc/ohlc.service';
 import { SignalInputData, TradingSignalKind, TradingSignalResult } from './signal.types';
 
@@ -12,6 +12,9 @@ const TRADING_SIGNALS = {
   HOLD: 0,
 } as const;
 
+const SIGNAL_INTERVAL = '1m';
+const SIGNAL_LIMIT = 220;
+
 @Injectable()
 export class SignalService {
   constructor(private readonly ohlcService: OhlcService) {}
@@ -24,12 +27,12 @@ export class SignalService {
 
     const candles = await this.ohlcService.getCandles({
       symbol: normalizedSymbol,
-      interval: '1d',
-      limit: 220,
+      interval: SIGNAL_INTERVAL,
+      limit: SIGNAL_LIMIT,
     });
 
-    if (candles.length < 2) {
-      throw new NotFoundException('No signal data found for symbol.');
+    if (!candles.length) {
+      return this.buildNoDataSignal('No candle history available for this symbol yet.');
     }
 
     const closes = candles.map((candle) => candle.c);
@@ -63,21 +66,36 @@ export class SignalService {
       bbUpper: bollinger.upper[currentIndex],
     });
 
-    const prevData = this.buildSignalInput({
-      close: closes[prevIndex],
-      ema8: ema8[prevIndex],
-      ema21: ema21[prevIndex],
-      ema20: ema20[prevIndex],
-      ema50: ema50[prevIndex],
-      rsi14: rsi14[prevIndex],
-      vwap: vwap[prevIndex],
-      volume: volumes[prevIndex],
-      avgVolume20: avgVolume20[prevIndex],
-      bbLower: bollinger.lower[prevIndex],
-      bbUpper: bollinger.upper[prevIndex],
-    });
+    const prevData =
+      prevIndex >= 0
+        ? this.buildSignalInput({
+            close: closes[prevIndex],
+            ema8: ema8[prevIndex],
+            ema21: ema21[prevIndex],
+            ema20: ema20[prevIndex],
+            ema50: ema50[prevIndex],
+            rsi14: rsi14[prevIndex],
+            vwap: vwap[prevIndex],
+            volume: volumes[prevIndex],
+            avgVolume20: avgVolume20[prevIndex],
+            bbLower: bollinger.lower[prevIndex],
+            bbUpper: bollinger.upper[prevIndex],
+          })
+        : undefined;
 
     return this.calculateTradingSignal(data, prevData);
+  }
+
+  private buildNoDataSignal(reason: string): TradingSignalResult {
+    return {
+      signal: 'HOLD',
+      confidence: 'LOW',
+      buyScore: 0,
+      sellScore: 0,
+      strength: 0,
+      reasons: [reason],
+      recommendedAction: 'WAIT',
+    };
   }
 
   private calculateTradingSignal(data: SignalInputData, prevData?: SignalInputData): TradingSignalResult {
@@ -105,7 +123,7 @@ export class SignalService {
       reasons.push('Price > VWAP');
     }
 
-    if (data.volume > data.avgVolume20 * 1.5) {
+    if (data.avgVolume20 > 0 && data.volume > data.avgVolume20 * 1.5) {
       buyScore += 1;
       reasons.push('High volume');
     }
@@ -135,7 +153,7 @@ export class SignalService {
       reasons.push('Price < VWAP');
     }
 
-    if (data.volume > data.avgVolume20 * 1.5) {
+    if (data.avgVolume20 > 0 && data.volume > data.avgVolume20 * 1.5) {
       sellScore += 1;
       reasons.push('High volume');
     }
@@ -162,7 +180,7 @@ export class SignalService {
       buyScore,
       sellScore,
       strength,
-      reasons: reasons.slice(0, 3),
+      reasons: reasons.length ? reasons.slice(0, 3) : ['No strong confluence yet.'],
       recommendedAction: this.getAction(signal, strength),
     };
   }
