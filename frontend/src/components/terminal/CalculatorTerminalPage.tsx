@@ -27,6 +27,57 @@ interface ScenarioResult {
   stopBreakdown: NepseCostResponse['breakdown'] | null;
 }
 
+interface RiskPlanState {
+  capital: string;
+  riskPercent: string;
+  entryPrice: string;
+  stopPrice: string;
+  targetPrice: string;
+}
+
+interface RiskPlanSummary {
+  maxRiskAmount: number;
+  riskPerShare: number;
+  suggestedQty: number;
+  positionValue: number;
+  potentialLoss: number;
+  potentialGain: number | null;
+  riskRewardRatio: number | null;
+  capitalUsagePct: number;
+  warning: string | null;
+}
+
+type ChecklistKey =
+  | 'trendConfirmed'
+  | 'entryTrigger'
+  | 'riskWithinLimit'
+  | 'rewardAtLeast2R'
+  | 'newsChecked';
+
+const CHECKLIST_ITEMS: Array<{ key: ChecklistKey; label: string }> = [
+  { key: 'trendConfirmed', label: 'Higher-timeframe trend confirmed' },
+  { key: 'entryTrigger', label: 'Entry trigger validated on current timeframe' },
+  { key: 'riskWithinLimit', label: 'Risk stays within my rule (max 1-2% capital)' },
+  { key: 'rewardAtLeast2R', label: 'Target supports at least 2R reward:risk' },
+  { key: 'newsChecked', label: 'Checked major news/events before entry' },
+];
+
+const INITIAL_RISK_PLAN: RiskPlanState = {
+  capital: '500000',
+  riskPercent: '1',
+  entryPrice: '',
+  stopPrice: '',
+  targetPrice: '',
+};
+
+const INITIAL_CHECKLIST: Record<ChecklistKey, boolean> = {
+  trendConfirmed: false,
+  entryTrigger: false,
+  riskWithinLimit: false,
+  rewardAtLeast2R: false,
+  newsChecked: false,
+};
+
 const INITIAL_FORM: FormState = {
   side: 'buy',
   symbol: '',
@@ -70,6 +121,8 @@ export function CalculatorTerminalPage() {
   const [watchlist, setWatchlist] = useState<WatchlistApiRow[]>([]);
   const [result, setResult] = useState<NepseCostResponse | null>(null);
   const [scenario, setScenario] = useState<ScenarioResult | null>(null);
+  const [riskPlan, setRiskPlan] = useState<RiskPlanState>(INITIAL_RISK_PLAN);
+  const [checklist, setChecklist] = useState<Record<ChecklistKey, boolean>>(INITIAL_CHECKLIST);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -122,6 +175,79 @@ export function CalculatorTerminalPage() {
       lineTwoValue: result.totalDeductions,
     };
   }, [form.side, result]);
+
+  const riskSummary = useMemo<RiskPlanSummary | null>(() => {
+    const capital = Number(riskPlan.capital);
+    const riskPercent = Number(riskPlan.riskPercent);
+    const entryPrice = Number(riskPlan.entryPrice);
+    const stopPrice = Number(riskPlan.stopPrice);
+    const targetPrice = Number(riskPlan.targetPrice);
+
+    if (
+      !Number.isFinite(capital) ||
+      !Number.isFinite(riskPercent) ||
+      !Number.isFinite(entryPrice) ||
+      !Number.isFinite(stopPrice) ||
+      capital <= 0 ||
+      riskPercent <= 0 ||
+      entryPrice <= 0 ||
+      stopPrice <= 0
+    ) {
+      return null;
+    }
+
+    const maxRiskAmount = capital * (riskPercent / 100);
+    const riskPerShare = entryPrice - stopPrice;
+
+    if (riskPerShare <= 0) {
+      return {
+        maxRiskAmount,
+        riskPerShare,
+        suggestedQty: 0,
+        positionValue: 0,
+        potentialLoss: 0,
+        potentialGain: null,
+        riskRewardRatio: null,
+        capitalUsagePct: 0,
+        warning: 'Stop-loss must be below entry for long positions.',
+      };
+    }
+
+    const suggestedQty = Math.max(0, Math.floor(maxRiskAmount / riskPerShare));
+    const positionValue = suggestedQty * entryPrice;
+    const potentialLoss = suggestedQty * riskPerShare;
+    const capitalUsagePct = capital > 0 ? (positionValue / capital) * 100 : 0;
+
+    const hasTarget = Number.isFinite(targetPrice) && targetPrice > entryPrice;
+    const rewardPerShare = hasTarget ? targetPrice - entryPrice : null;
+    const potentialGain = hasTarget && rewardPerShare !== null ? suggestedQty * rewardPerShare : null;
+    const riskRewardRatio =
+      potentialGain !== null && potentialLoss > 0 ? potentialGain / potentialLoss : null;
+
+    const warning =
+      suggestedQty < 1
+        ? 'Risk budget is too small for this stop distance. Reduce stop distance or increase risk budget.'
+        : capitalUsagePct > 100
+          ? 'Required position value exceeds available capital.'
+          : null;
+
+    return {
+      maxRiskAmount,
+      riskPerShare,
+      suggestedQty,
+      positionValue,
+      potentialLoss,
+      potentialGain,
+      riskRewardRatio,
+      capitalUsagePct,
+      warning,
+    };
+  }, [riskPlan]);
+
+  const checklistCompleted = useMemo(
+    () => Object.values(checklist).filter(Boolean).length,
+    [checklist],
+  );
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -560,6 +686,133 @@ export function CalculatorTerminalPage() {
           </article>
         </section>
       ) : null}
+
+      <section className="grid gap-5 xl:grid-cols-2">
+        <article className="terminal-card space-y-4 p-5">
+          <header>
+            <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Risk Manager</p>
+            <h3 className="mt-1 text-base font-semibold text-white">Position Sizing by Risk</h3>
+          </header>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-1">
+              <label className="text-xs font-medium uppercase tracking-wide text-zinc-400">Capital (NPR)</label>
+              <input
+                type="number"
+                value={riskPlan.capital}
+                onChange={(event) => setRiskPlan((old) => ({ ...old, capital: event.target.value }))}
+                className="terminal-input font-mono"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-medium uppercase tracking-wide text-zinc-400">Risk Per Trade (%)</label>
+              <input
+                type="number"
+                value={riskPlan.riskPercent}
+                onChange={(event) => setRiskPlan((old) => ({ ...old, riskPercent: event.target.value }))}
+                className="terminal-input font-mono"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-medium uppercase tracking-wide text-zinc-400">Entry Price</label>
+              <input
+                type="number"
+                value={riskPlan.entryPrice}
+                onChange={(event) => setRiskPlan((old) => ({ ...old, entryPrice: event.target.value }))}
+                className="terminal-input font-mono"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-medium uppercase tracking-wide text-zinc-400">Stop Price</label>
+              <input
+                type="number"
+                value={riskPlan.stopPrice}
+                onChange={(event) => setRiskPlan((old) => ({ ...old, stopPrice: event.target.value }))}
+                className="terminal-input font-mono"
+              />
+            </div>
+            <div className="space-y-1 md:col-span-2">
+              <label className="text-xs font-medium uppercase tracking-wide text-zinc-400">Target Price (optional)</label>
+              <input
+                type="number"
+                value={riskPlan.targetPrice}
+                onChange={(event) => setRiskPlan((old) => ({ ...old, targetPrice: event.target.value }))}
+                className="terminal-input font-mono"
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() =>
+                setRiskPlan((old) => ({
+                  ...old,
+                  entryPrice: form.price || old.entryPrice,
+                  stopPrice: form.stopLoss || old.stopPrice,
+                  targetPrice: form.targetPrice || old.targetPrice,
+                }))
+              }
+              className="terminal-btn"
+            >
+              Sync From Calculator Inputs
+            </button>
+          </div>
+
+          {riskSummary ? (
+            <div className="grid gap-3 rounded-lg border border-zinc-800 bg-zinc-950/70 p-4 md:grid-cols-2">
+              <p className="text-sm text-zinc-300">Max Risk Amount: <span className="font-mono text-zinc-100">₹ {formatMoney(riskSummary.maxRiskAmount)}</span></p>
+              <p className="text-sm text-zinc-300">Risk Per Share: <span className="font-mono text-zinc-100">₹ {formatMoney(riskSummary.riskPerShare)}</span></p>
+              <p className="text-sm text-zinc-300">Suggested Quantity: <span className="font-mono text-zinc-100">{riskSummary.suggestedQty}</span></p>
+              <p className="text-sm text-zinc-300">Position Value: <span className="font-mono text-zinc-100">₹ {formatMoney(riskSummary.positionValue)}</span></p>
+              <p className="text-sm text-zinc-300">Potential Loss: <span className="font-mono text-terminal-red">₹ {formatMoney(riskSummary.potentialLoss)}</span></p>
+              <p className="text-sm text-zinc-300">Potential Gain: <span className="font-mono text-terminal-green">{riskSummary.potentialGain === null ? '-' : `₹ ${formatMoney(riskSummary.potentialGain)}`}</span></p>
+              <p className="text-sm text-zinc-300">Capital Used: <span className="font-mono text-zinc-100">{riskSummary.capitalUsagePct.toFixed(2)}%</span></p>
+              <p className="text-sm text-zinc-300">R:R Ratio: <span className="font-mono text-zinc-100">{riskSummary.riskRewardRatio === null ? '-' : riskSummary.riskRewardRatio.toFixed(2)}</span></p>
+            </div>
+          ) : (
+            <p className="text-sm text-zinc-500">Fill risk inputs to get position sizing suggestion.</p>
+          )}
+
+          {riskSummary?.warning ? <p className="text-sm font-medium text-terminal-red">{riskSummary.warning}</p> : null}
+        </article>
+
+        <article className="terminal-card space-y-4 p-5">
+          <header>
+            <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Execution Discipline</p>
+            <h3 className="mt-1 text-base font-semibold text-white">Pre-Trade Checklist</h3>
+          </header>
+
+          <div className="space-y-2">
+            {CHECKLIST_ITEMS.map((item) => (
+              <label key={item.key} className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-sm text-zinc-300">
+                <input
+                  type="checkbox"
+                  checked={checklist[item.key]}
+                  onChange={(event) =>
+                    setChecklist((old) => ({
+                      ...old,
+                      [item.key]: event.target.checked,
+                    }))
+                  }
+                  className="h-4 w-4 accent-amber-400"
+                />
+                <span>{item.label}</span>
+              </label>
+            ))}
+          </div>
+
+          <div className="rounded-lg border border-zinc-800 bg-black/50 p-3 text-sm">
+            <p className="text-zinc-400">Checklist Completion</p>
+            <p className="mt-1 font-mono text-lg text-white">
+              {checklistCompleted}/{CHECKLIST_ITEMS.length}
+            </p>
+            <p className="mt-1 text-xs text-zinc-500">
+              Trade only when your process is complete and aligned with your risk plan.
+            </p>
+          </div>
+        </article>
+      </section>
     </section>
   );
 }
