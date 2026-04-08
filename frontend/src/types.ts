@@ -90,3 +90,25 @@ export interface NepseCostResponse {
   totalDeductions: number;
   breakdown: NepseCostBreakdownRow[];
 }
+
+export interface WatchlistApiRow {
+  symbol: string;
+  company: string | null;
+  sector: string | null;
+  ltp: number;
+  change: number | null;
+  change_pct: number | null;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  volume: number | null;
+  turnover: number | null;
+}
+
+export interface IndexApiRow {
+  indexName: string;
+  value: number;
+  change: number;
+  change_pct: number;
+  savedAt: string;
+}

@@ -1,6 +1,7 @@
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { BuySellCalculator } from './components/BuySellCalculator';
+import { LiveMarketBoard } from './components/LiveMarketBoard';
 import { PLSimulator } from './components/PLSimulator';
 
 const THEME_KEY = 'nepse.personal-calculator.theme';
@@ -23,6 +24,9 @@ export default function App() {
           <NavLink to="/" end className={({ isActive }) => (isActive ? 'tab active' : 'tab')}>
             Buy/Sell Calculator
           </NavLink>
+          <NavLink to="/live-market" className={({ isActive }) => (isActive ? 'tab active' : 'tab')}>
+            Live Market
+          </NavLink>
           <NavLink to="/pl-simulator" className={({ isActive }) => (isActive ? 'tab active' : 'tab')}>
             P/L Simulator
           </NavLink>
@@ -40,6 +44,7 @@ export default function App() {
       <main>
         <Routes>
           <Route path="/" element={<BuySellCalculator />} />
+          <Route path="/live-market" element={<LiveMarketBoard />} />
           <Route path="/pl-simulator" element={<PLSimulator />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

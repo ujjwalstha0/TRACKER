@@ -308,6 +308,32 @@ th {
   margin-top: 8px;
 }
 
+.live-board {
+  display: grid;
+  gap: 12px;
+}
+
+.live-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.live-kpi-grid {
+  margin-top: 0;
+}
+
+.live-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.live-full-table h3 {
+  margin: 0 0 8px;
+}
+
 .app-footer {
   margin-top: 16px;
   padding: 12px 14px;
@@ -343,6 +369,15 @@ th {
   }
 
   .scenario-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .live-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .live-grid {
     grid-template-columns: 1fr;
   }
 
