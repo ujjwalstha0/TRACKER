@@ -18,6 +18,10 @@ export function CalculatorWidget() {
   const [input, setInput] = useState<FeeCalculationInput>(defaultInput);
   const [result, setResult] = useState<FeeCalculationResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const [capital, setCapital] = useState(500000);
+  const [riskPercent, setRiskPercent] = useState(1.5);
+  const [entryPrice, setEntryPrice] = useState(550);
+  const [stopPrice, setStopPrice] = useState(532);
 
   const titleAmount = useMemo(() => {
     if (!result) return '-';
@@ -36,6 +40,11 @@ export function CalculatorWidget() {
       setLoading(false);
     }
   };
+
+  const riskAmount = (capital * riskPercent) / 100;
+  const riskPerShare = Math.max(0.01, entryPrice - stopPrice);
+  const maxShares = Math.floor(riskAmount / riskPerShare);
+  const capitalNeeded = maxShares * entryPrice;
 
   return (
     <section className="panel calculator-panel">
@@ -130,6 +139,36 @@ export function CalculatorWidget() {
           </article>
         </div>
       )}
+
+      <div className="panel risk-panel">
+        <h3>Position Sizing Guardrail</h3>
+        <p>Keep your downside controlled before you place the order.</p>
+        <div className="calculator-grid">
+          <label>
+            Account Capital (NPR)
+            <input type="number" value={capital} onChange={(e) => setCapital(Number(e.target.value))} />
+          </label>
+          <label>
+            Risk % Per Trade
+            <input type="number" value={riskPercent} step="0.1" onChange={(e) => setRiskPercent(Number(e.target.value))} />
+          </label>
+          <label>
+            Planned Entry
+            <input type="number" value={entryPrice} onChange={(e) => setEntryPrice(Number(e.target.value))} />
+          </label>
+          <label>
+            Stop Loss
+            <input type="number" value={stopPrice} onChange={(e) => setStopPrice(Number(e.target.value))} />
+          </label>
+        </div>
+
+        <div className="risk-result">
+          <p>Maximum risk amount: <strong>NPR {riskAmount.toLocaleString()}</strong></p>
+          <p>Risk per share: <strong>NPR {riskPerShare.toFixed(2)}</strong></p>
+          <p>Maximum quantity: <strong>{maxShares.toLocaleString()} shares</strong></p>
+          <p>Capital required: <strong>NPR {capitalNeeded.toLocaleString()}</strong></p>
+        </div>
+      </div>
     </section>
   );
 }

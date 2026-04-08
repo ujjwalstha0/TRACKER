@@ -59,4 +59,8 @@ export interface WatchlistItem {
   currentPrice: number;
   quantity: number;
   listingType: ListingType;
+  targetPrice: number;
+  stopLoss: number;
+  momentum: number;
+  catalyst: string;
 }
