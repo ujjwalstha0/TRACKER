@@ -7,6 +7,7 @@ import {
   FeeCalculationResult,
   IndexApiRow,
   IndicatorsResponse,
+  MarketStatusResponse,
   NepseCostRequest,
   NepseCostResponse,
   OtpDispatchResponse,
@@ -169,6 +170,15 @@ export async function fetchIndices(): Promise<IndexApiRow[]> {
   if (!res.ok) {
     throw new Error('Failed to load indices');
   }
+  return res.json();
+}
+
+export async function fetchMarketStatus(): Promise<MarketStatusResponse> {
+  const res = await fetch(`${API_BASE}/market/status`);
+  if (!res.ok) {
+    throw new Error('Failed to load market status');
+  }
+
   return res.json();
 }
 

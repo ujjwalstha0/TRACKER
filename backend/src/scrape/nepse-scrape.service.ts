@@ -6,12 +6,17 @@ import { AnyNode } from 'domhandler';
 import * as https from 'https';
 import scrapeConfig from '../config/scrape.config';
 import { PrismaService } from '../prisma/prisma.service';
-import { IndexValueDto, PriceDto } from './scrape.types';
+import { IndexValueDto, MarketStatusDto, PriceDto } from './scrape.types';
 
 const FALLBACK_TODAY_PRICE_URL = 'https://www.sharesansar.com/today-share-price';
 const FALLBACK_LIVE_TRADING_URL = 'https://www.sharesansar.com/live-trading';
+const PRIMARY_MARKET_STATUS_URL = 'https://www.nepalstock.com/';
 const SYMBOL_PROFILE_URL = 'https://www.sharesansar.com/company-list';
+const SECTORWISE_PROFILE_URL = 'https://www.sharesansar.com/sectorwise-share-price';
+const COMPANY_PROFILE_URL_PREFIX = 'https://www.sharesansar.com/company/';
 const SYMBOL_PROFILE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const DETAIL_SECTOR_BACKFILL_LIMIT_PER_CYCLE = 8;
+const DETAIL_SECTOR_BACKFILL_CONCURRENCY = 2;
 
 const SCRAPE_HTTP_HEADERS = {
   'User-Agent':
@@ -60,6 +65,20 @@ interface NormalizedPriceRow {
   turnover: number | null;
 }
 
+interface ParsedMarketStatus {
+  isOpen: boolean;
+  session: string;
+  asOf: string | null;
+}
+
+interface IndexSnapshotRow {
+  indexName: string;
+  value: any;
+  change: any;
+  changePct: any;
+  savedAt: Date;
+}
+
 @Injectable()
 export class NepseScrapeService {
   private readonly logger = new Logger(NepseScrapeService.name);
@@ -67,6 +86,7 @@ export class NepseScrapeService {
     fetchedAt: number;
     bySymbol: Map<string, SymbolProfile>;
   } | null = null;
+  private readonly symbolSectorCache = new Map<string, { sector: string | null; fetchedAt: number }>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -82,6 +102,55 @@ export class NepseScrapeService {
   async scrapeIndices(): Promise<IndexValueDto[]> {
     const html = await this.fetchHtmlWithFallback(this.config.liveTradingUrl, [FALLBACK_LIVE_TRADING_URL]);
     return this.parseIndices(html);
+  }
+
+  async scrapeMarketStatus(): Promise<MarketStatusDto> {
+    const sources: Array<{
+      source: MarketStatusDto['source'];
+      url: string;
+      parser: (html: string) => ParsedMarketStatus | null;
+    }> = [
+      {
+        source: 'nepalstock',
+        url: PRIMARY_MARKET_STATUS_URL,
+        parser: this.parseMarketStatusFromNepalstock.bind(this),
+      },
+      {
+        source: 'sharesansar',
+        url: FALLBACK_LIVE_TRADING_URL,
+        parser: this.parseMarketStatusFromSharesansar.bind(this),
+      },
+    ];
+
+    for (const source of sources) {
+      try {
+        const html = await this.fetchHtml(source.url);
+        const parsed = source.parser(html);
+
+        if (!parsed) {
+          this.logger.warn(`Unable to infer market status from ${source.source}.`);
+          continue;
+        }
+
+        return {
+          isOpen: parsed.isOpen,
+          label: parsed.isOpen ? 'OPEN' : 'CLOSED',
+          session: parsed.session,
+          source: source.source,
+          asOf: parsed.asOf,
+        };
+      } catch {
+        this.logger.warn(`Market status source failed: ${source.url}`);
+      }
+    }
+
+    return {
+      isOpen: false,
+      label: 'CLOSED',
+      session: 'STATUS UNAVAILABLE',
+      source: 'unknown',
+      asOf: null,
+    };
   }
 
   private async fetchHtmlWithFallback(primaryUrl: string, fallbackUrls: string[]): Promise<string> {
@@ -112,6 +181,7 @@ export class NepseScrapeService {
 
     const savedAt = new Date();
     const symbolProfiles = await this.getSymbolProfiles();
+    await this.backfillMissingSectors(prices, symbolProfiles);
 
     for (const row of prices) {
       const normalizedRow = this.sanitizePriceRow(row);
@@ -227,6 +297,90 @@ export class NepseScrapeService {
     };
   }
 
+  private parseMarketStatusFromNepalstock(html: string): ParsedMarketStatus | null {
+    const $ = cheerio.load(html);
+    const bodyText = $('body').text().replace(/\s+/g, ' ').trim();
+    if (!bodyText) return null;
+
+    const section = this.extractTextWindow(bodyText, 'NEPSE Index', 640) ?? bodyText;
+    const session = this.extractSessionFromText(section);
+    if (!session) return null;
+
+    const asOf = this.extractAsOf(section, [
+      /As of\s*:?\s*([A-Za-z]{3}\s+\d{1,2},\s*\d{4},\s*\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM))/i,
+      /([A-Za-z]{3}\s+\d{1,2}\s*\|\s*\d{1,2}:\d{2}\s*(?:AM|PM))/i,
+    ]);
+
+    return {
+      isOpen: session === 'OPEN',
+      session,
+      asOf,
+    };
+  }
+
+  private parseMarketStatusFromSharesansar(html: string): ParsedMarketStatus | null {
+    const $ = cheerio.load(html);
+    const bodyText = $('body').text().replace(/\s+/g, ' ').trim();
+    if (!bodyText) return null;
+
+    const section = this.extractTextWindow(bodyText, 'Live Trading', 900) ?? bodyText;
+    const normalized = section.toUpperCase();
+
+    let session: string | null = null;
+    if (/\bMARKET\s+CLOSED\b/.test(normalized)) {
+      session = 'CLOSED';
+    } else if (/\bMARKET\s+OPEN\b/.test(normalized)) {
+      session = 'OPEN';
+    }
+
+    if (!session) return null;
+
+    const asOf = this.extractAsOf(section, [
+      /As of\s*:?\s*([0-9]{4}-[0-9]{2}-[0-9]{2}(?:\s+[0-9]{2}:[0-9]{2}:[0-9]{2})?)/i,
+    ]);
+
+    return {
+      isOpen: session === 'OPEN',
+      session,
+      asOf,
+    };
+  }
+
+  private extractSessionFromText(text: string): string | null {
+    const normalized = text.toUpperCase().replace(/\s+/g, ' ');
+
+    const hasHoliday = /\bHOLIDAY\b/.test(normalized);
+    const hasClosed = /\bCLOSED\b/.test(normalized);
+    const hasPreOpen = /\bPRE[-\s]?OPEN\b/.test(normalized);
+    const hasOpen = /\bOPEN\b/.test(normalized);
+
+    if (hasHoliday) return 'HOLIDAY';
+    if (hasPreOpen && hasClosed) return 'PRE-OPEN CLOSED';
+    if (hasClosed) return 'CLOSED';
+    if (hasPreOpen) return 'PRE-OPEN';
+    if (hasOpen) return 'OPEN';
+
+    return null;
+  }
+
+  private extractTextWindow(text: string, anchor: string, span: number): string | null {
+    const anchorIndex = text.toUpperCase().indexOf(anchor.toUpperCase());
+    if (anchorIndex < 0) return null;
+
+    return text.slice(anchorIndex, Math.min(text.length, anchorIndex + span));
+  }
+
+  private extractAsOf(text: string, patterns: RegExp[]): string | null {
+    for (const pattern of patterns) {
+      const matched = text.match(pattern)?.[1]?.replace(/\s+/g, ' ').trim();
+      if (matched) {
+        return matched;
+      }
+    }
+
+    return null;
+  }
+
   private async getSymbolProfiles(): Promise<Map<string, SymbolProfile>> {
     if (
       this.symbolProfilesCache &&
@@ -235,22 +389,139 @@ export class NepseScrapeService {
       return this.symbolProfilesCache.bySymbol;
     }
 
+    const bySymbol = new Map<string, SymbolProfile>();
+
     try {
       const html = await this.fetchHtmlWithFallback(SYMBOL_PROFILE_URL, []);
-      const bySymbol = this.parseSymbolProfiles(html);
-
-      if (bySymbol.size > 0) {
-        this.symbolProfilesCache = {
-          fetchedAt: Date.now(),
-          bySymbol,
-        };
-      }
-
-      return bySymbol;
+      this.mergeSymbolProfiles(bySymbol, this.parseSymbolProfiles(html));
     } catch (error) {
-      this.logger.warn('Symbol profile backfill source unavailable. Continuing without metadata enrichment.');
-      return this.symbolProfilesCache?.bySymbol ?? new Map<string, SymbolProfile>();
+      this.logger.warn('Company profile source unavailable. Continuing with partial metadata enrichment.');
     }
+
+    try {
+      const html = await this.fetchHtmlWithFallback(SECTORWISE_PROFILE_URL, []);
+      this.mergeSymbolProfiles(bySymbol, this.parseSectorProfiles(html));
+    } catch (error) {
+      this.logger.warn('Sector profile source unavailable. Continuing with partial metadata enrichment.');
+    }
+
+    if (bySymbol.size > 0) {
+      this.symbolProfilesCache = {
+        fetchedAt: Date.now(),
+        bySymbol,
+      };
+      return bySymbol;
+    }
+
+    this.logger.warn('Symbol profile backfill sources unavailable. Continuing without metadata enrichment.');
+    return this.symbolProfilesCache?.bySymbol ?? new Map<string, SymbolProfile>();
+  }
+
+  private async backfillMissingSectors(prices: PriceDto[], symbolProfiles: Map<string, SymbolProfile>): Promise<void> {
+    const now = Date.now();
+    const uniqueSymbols = Array.from(
+      new Set(prices.map((row) => row.symbol.trim().toUpperCase()).filter((symbol) => symbol.length > 0)),
+    );
+
+    if (!uniqueSymbols.length) return;
+
+    for (const symbol of uniqueSymbols) {
+      if (symbolProfiles.get(symbol)?.sector) continue;
+
+      const cached = this.symbolSectorCache.get(symbol);
+      if (!cached) continue;
+      if (now - cached.fetchedAt >= SYMBOL_PROFILE_CACHE_TTL_MS) continue;
+      if (!cached.sector) continue;
+
+      const existing = symbolProfiles.get(symbol);
+      symbolProfiles.set(symbol, {
+        company: existing?.company ?? null,
+        sector: cached.sector,
+      });
+    }
+
+    const symbolsToFetch = uniqueSymbols
+      .filter((symbol) => !symbolProfiles.get(symbol)?.sector)
+      .filter((symbol) => {
+        const cached = this.symbolSectorCache.get(symbol);
+        return !cached || now - cached.fetchedAt >= SYMBOL_PROFILE_CACHE_TTL_MS;
+      })
+      .slice(0, DETAIL_SECTOR_BACKFILL_LIMIT_PER_CYCLE);
+
+    if (!symbolsToFetch.length) return;
+
+    let enrichedCount = 0;
+
+    for (let idx = 0; idx < symbolsToFetch.length; idx += DETAIL_SECTOR_BACKFILL_CONCURRENCY) {
+      const batch = symbolsToFetch.slice(idx, idx + DETAIL_SECTOR_BACKFILL_CONCURRENCY);
+      const resolved = await Promise.all(
+        batch.map(async (symbol) => {
+          const sector = await this.fetchSectorFromCompanyProfile(symbol);
+          return { symbol, sector };
+        }),
+      );
+
+      for (const row of resolved) {
+        this.symbolSectorCache.set(row.symbol, {
+          sector: row.sector,
+          fetchedAt: now,
+        });
+
+        if (!row.sector) continue;
+
+        const existing = symbolProfiles.get(row.symbol);
+        symbolProfiles.set(row.symbol, {
+          company: existing?.company ?? null,
+          sector: row.sector,
+        });
+        enrichedCount += 1;
+      }
+    }
+
+    if (enrichedCount > 0) {
+      this.logger.log(`Backfilled sector metadata for ${enrichedCount} symbols from company profiles.`);
+    }
+  }
+
+  private async fetchSectorFromCompanyProfile(symbol: string): Promise<string | null> {
+    try {
+      const html = await this.fetchHtml(`${COMPANY_PROFILE_URL_PREFIX}${symbol.toLowerCase()}`);
+      return this.parseSectorFromCompanyProfile(html, symbol);
+    } catch {
+      return null;
+    }
+  }
+
+  private parseSectorFromCompanyProfile(html: string, symbol: string): string | null {
+    const $ = cheerio.load(html);
+    const bodyText = $('body').text().replace(/\s+/g, ' ').trim();
+    if (!bodyText) return null;
+
+    const escapedSymbol = this.escapeRegExp(symbol);
+    const bySymbol = bodyText.match(
+      new RegExp(
+        `Symbol\\s*:\\s*${escapedSymbol}\\s*Sector\\s*:\\s*([^:]{2,90}?)\\s*(?:Share Registrar|Auditor|Address|Phone|Email|Website|$)`,
+        'i',
+      ),
+    );
+
+    const direct = this.normalizeSectorLabel(bySymbol?.[1] ?? '');
+    if (direct) {
+      return direct;
+    }
+
+    const generic = bodyText.match(/\bSector\s*:?\s*([A-Za-z&/\- ]{3,90})\b/i)?.[1] ?? null;
+    if (!generic) return null;
+
+    const cleaned = generic.replace(/\s+/g, ' ').trim();
+    if (!cleaned) return null;
+    if (/sectorwise|share\s+price/i.test(cleaned)) return null;
+
+    return this.normalizeSectorLabel(cleaned);
+  }
+
+  private escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
   async saveIndicesToDb(indices: IndexValueDto[]): Promise<void> {
@@ -275,6 +546,77 @@ export class NepseScrapeService {
           changePct: row.changePct,
         },
       });
+    }
+
+    await this.cleanupIndexAliasDuplicates();
+  }
+
+  private async cleanupIndexAliasDuplicates(): Promise<void> {
+    const rows = (await this.prisma.indexValue.findMany({
+      select: {
+        indexName: true,
+        value: true,
+        change: true,
+        changePct: true,
+        savedAt: true,
+      },
+    })) as IndexSnapshotRow[];
+
+    if (!rows.length) return;
+
+    const groups = new Map<string, IndexSnapshotRow[]>();
+    for (const row of rows) {
+      const canonicalName = this.normalizeIndexName(row.indexName);
+      const bucket = groups.get(canonicalName) ?? [];
+      bucket.push(row);
+      groups.set(canonicalName, bucket);
+    }
+
+    let removedCount = 0;
+
+    for (const [canonicalName, group] of groups) {
+      if (!group.length) continue;
+
+      const preferred = group
+        .slice(1)
+        .reduce((latest, current) => (current.savedAt.getTime() > latest.savedAt.getTime() ? current : latest), group[0]);
+
+      await this.prisma.indexValue.upsert({
+        where: { indexName: canonicalName },
+        update: {
+          value: preferred.value,
+          change: preferred.change,
+          changePct: preferred.changePct,
+          savedAt: preferred.savedAt,
+        },
+        create: {
+          indexName: canonicalName,
+          value: preferred.value,
+          change: preferred.change,
+          changePct: preferred.changePct,
+          savedAt: preferred.savedAt,
+        },
+      });
+
+      const staleNames = Array.from(new Set(group.map((entry) => entry.indexName))).filter(
+        (name) => name !== canonicalName,
+      );
+
+      if (!staleNames.length) continue;
+
+      const deleted = await this.prisma.indexValue.deleteMany({
+        where: {
+          indexName: {
+            in: staleNames,
+          },
+        },
+      });
+
+      removedCount += deleted.count;
+    }
+
+    if (removedCount > 0) {
+      this.logger.log(`Canonicalized index aliases. Removed ${removedCount} duplicate legacy rows.`);
     }
   }
 
@@ -371,6 +713,8 @@ export class NepseScrapeService {
     const $ = cheerio.load(html);
     const bySymbol = new Map<string, SymbolProfile>();
 
+    this.mergeSymbolProfiles(bySymbol, this.parseCmpJsonProfiles($));
+
     const table = this.findTable($, ['symbol']);
     if (table) {
       const headers = this.extractHeaders($, table);
@@ -429,7 +773,107 @@ export class NepseScrapeService {
     return bySymbol;
   }
 
-  private extractSymbol(value: string | null): string | null {
+  private parseCmpJsonProfiles($: cheerio.CheerioAPI): Map<string, SymbolProfile> {
+    const bySymbol = new Map<string, SymbolProfile>();
+    const scriptPayload = $('script')
+      .toArray()
+      .map((script) => $(script).html() ?? '')
+      .find((content) => /var\s+cmpjson\s*=\s*\[/i.test(content));
+
+    if (!scriptPayload) return bySymbol;
+
+    const jsonMatch = scriptPayload.match(/var\s+cmpjson\s*=\s*(\[[\s\S]*?\]);/i);
+    if (!jsonMatch?.[1]) return bySymbol;
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(jsonMatch[1]);
+    } catch {
+      return bySymbol;
+    }
+
+    if (!Array.isArray(parsed)) return bySymbol;
+
+    for (const item of parsed) {
+      if (!item || typeof item !== 'object') continue;
+
+      const record = item as {
+        symbol?: unknown;
+        companyname?: unknown;
+        companyName?: unknown;
+      };
+
+      const symbol = this.extractSymbol(String(record.symbol ?? ''), true);
+      if (!symbol) continue;
+
+      const company = this.cleanProfileText(String(record.companyname ?? record.companyName ?? ''));
+      if (!company) continue;
+
+      bySymbol.set(symbol, { company, sector: null });
+    }
+
+    return bySymbol;
+  }
+
+  private parseSectorProfiles(html: string): Map<string, SymbolProfile> {
+    const $ = cheerio.load(html);
+    const bySymbol = new Map<string, SymbolProfile>();
+
+    for (const section of $('.news-list.b-shadow.margin-bottom-20').toArray()) {
+      const sectionEl = $(section);
+      const sector = this.normalizeSectorLabel(sectionEl.find('h3.heading-title').first().text());
+      if (!sector) continue;
+
+      for (const table of sectionEl.find('table').toArray()) {
+        const tableEl = $(table);
+        const headers = this.extractHeaders($, tableEl);
+        const rows = this.extractRows($, tableEl);
+        const symbolIdx = this.resolveHeaderIndex(headers, ['symbol']);
+
+        if (symbolIdx < 0) continue;
+
+        for (const row of rows) {
+          const cells = $(row).find('td').toArray();
+          if (!cells.length) continue;
+
+          const symbol = this.extractSymbol(this.readCell($, cells, symbolIdx));
+          if (!symbol) continue;
+
+          const existing = bySymbol.get(symbol);
+          bySymbol.set(symbol, {
+            company: existing?.company ?? null,
+            sector,
+          });
+        }
+      }
+    }
+
+    return bySymbol;
+  }
+
+  private normalizeSectorLabel(value: string): string | null {
+    const cleaned = value.replace(/\s+/g, ' ').trim();
+    if (!cleaned) return null;
+
+    const normalized = cleaned.toUpperCase();
+    if (normalized.includes('NEPSE CALENDAR')) return null;
+    if (normalized.startsWith('TOP GAINER')) return null;
+    if (normalized.startsWith('TOP LOSER')) return null;
+
+    return cleaned;
+  }
+
+  private mergeSymbolProfiles(target: Map<string, SymbolProfile>, source: Map<string, SymbolProfile>): void {
+    for (const [symbol, incoming] of source) {
+      const existing = target.get(symbol);
+      target.set(symbol, {
+        company: incoming.company ?? existing?.company ?? null,
+        sector: incoming.sector ?? existing?.sector ?? null,
+      });
+    }
+  }
+
+  private extractSymbol(value: string | null, allowLeadingDigit = false): string | null {
     if (!value) return null;
 
     const token = value
@@ -438,7 +882,12 @@ export class NepseScrapeService {
       .replace(/[^A-Za-z0-9]/g, '')
       .toUpperCase();
 
-    if (!/^[A-Z][A-Z0-9]{1,9}$/.test(token)) {
+    if (!token) {
+      return null;
+    }
+
+    const symbolPattern = allowLeadingDigit ? /^(?=.*[A-Z])[A-Z0-9]{2,20}$/ : /^[A-Z][A-Z0-9]{1,19}$/;
+    if (!symbolPattern.test(token)) {
       return null;
     }
 

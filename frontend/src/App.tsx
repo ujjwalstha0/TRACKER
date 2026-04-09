@@ -8,9 +8,9 @@ import { LiveMarketTerminalPage } from './components/terminal/LiveMarketTerminal
 import { PortfolioTerminalPage } from './components/terminal/PortfolioTerminalPage';
 import { SignalDashboardTerminalPage } from './components/terminal/SignalDashboardTerminalPage';
 import { TradeJournalTerminalPage } from './components/terminal/TradeJournalTerminalPage';
-import { fetchMe } from './lib/api';
+import { fetchMarketStatus, fetchMe } from './lib/api';
 import { clearAuthSession, getAuthToken, getStoredUser, setAuthSession } from './lib/auth';
-import { AuthUser } from './types';
+import { AuthUser, MarketStatusResponse } from './types';
 
 interface NavItem {
   to: string;
@@ -31,37 +31,22 @@ const PRIVATE_NAV = [
   { to: '/trade-journal', label: 'Journal' },
 ] as NavItem[];
 
+const MARKET_STATUS_POLL_INTERVAL_MS = 60_000;
+
+const DEFAULT_MARKET_STATUS: MarketStatusResponse = {
+  isOpen: false,
+  label: 'CLOSED',
+  session: 'STATUS UNAVAILABLE',
+  source: 'unknown',
+  asOf: null,
+};
+
 function ProtectedPage({ user, children }: { user: AuthUser | null; children: JSX.Element }) {
   if (!user) {
     return <Navigate to="/auth" replace />;
   }
 
   return children;
-}
-
-function getMarketStatus(now: Date): { isOpen: boolean; label: 'OPEN' | 'CLOSED' } {
-  const formatter = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Asia/Kathmandu',
-    weekday: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
-
-  const parts = formatter.formatToParts(now);
-  const weekday = parts.find((part) => part.type === 'weekday')?.value ?? '';
-  const hour = Number(parts.find((part) => part.type === 'hour')?.value ?? '0');
-  const minute = Number(parts.find((part) => part.type === 'minute')?.value ?? '0');
-
-  const tradingDays = new Set(['Sun', 'Mon', 'Tue', 'Wed', 'Thu']);
-  const minuteOfDay = hour * 60 + minute;
-  const isOpenWindow = minuteOfDay >= 11 * 60 && minuteOfDay < 15 * 60;
-  const isOpen = tradingDays.has(weekday) && isOpenWindow;
-
-  return {
-    isOpen,
-    label: isOpen ? 'OPEN' : 'CLOSED',
-  };
 }
 
 function getUserInitial(user: AuthUser): string {
@@ -72,6 +57,7 @@ function getUserInitial(user: AuthUser): string {
 export default function App() {
   const [usePureBlack, setUsePureBlack] = useState(true);
   const [now, setNow] = useState(() => new Date());
+  const [marketStatus, setMarketStatus] = useState<MarketStatusResponse>(DEFAULT_MARKET_STATUS);
   const [user, setUser] = useState<AuthUser | null>(() => getStoredUser());
   const [authChecking, setAuthChecking] = useState(true);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -109,6 +95,34 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    let isMounted = true;
+
+    const loadMarketStatus = async () => {
+      try {
+        const nextStatus = await fetchMarketStatus();
+        if (!isMounted) {
+          return;
+        }
+
+        setMarketStatus(nextStatus);
+      } catch {
+        // Keep the last known status if upstream sources are briefly unavailable.
+      }
+    };
+
+    void loadMarketStatus();
+
+    const timer = setInterval(() => {
+      void loadMarketStatus();
+    }, MARKET_STATUS_POLL_INTERVAL_MS);
+
+    return () => {
+      isMounted = false;
+      clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
     const onPointerDown = (event: MouseEvent) => {
       if (!userMenuRef.current) return;
 
@@ -140,8 +154,6 @@ export default function App() {
       ? 'min-h-screen bg-[#060b10] text-white'
       : 'min-h-screen bg-[#0a1621] text-white';
   }, [usePureBlack]);
-
-  const marketStatus = useMemo(() => getMarketStatus(now), [now]);
 
   const allNav = user ? [...PUBLIC_NAV, ...PRIVATE_NAV] : PUBLIC_NAV;
 
@@ -177,6 +189,7 @@ export default function App() {
 
           <div className="ml-auto flex items-center gap-3">
             <span
+              title={`Session: ${marketStatus.session}${marketStatus.asOf ? ` | As of ${marketStatus.asOf}` : ''} | Source: ${marketStatus.source}`}
               className={
                 marketStatus.isOpen
                   ? 'rounded-md border border-terminal-green/60 bg-terminal-green/15 px-3 py-1.5 font-mono text-xs font-semibold tracking-wide text-terminal-green'

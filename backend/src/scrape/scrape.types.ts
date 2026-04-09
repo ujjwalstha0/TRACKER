@@ -18,3 +18,11 @@ export interface IndexValueDto {
   change: number;
   changePct: number;
 }
+
+export interface MarketStatusDto {
+  isOpen: boolean;
+  label: 'OPEN' | 'CLOSED';
+  session: string;
+  source: 'nepalstock' | 'sharesansar' | 'unknown';
+  asOf: string | null;
+}

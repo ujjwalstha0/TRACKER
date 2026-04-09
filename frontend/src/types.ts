@@ -113,6 +113,14 @@ export interface IndexApiRow {
   savedAt: string;
 }
 
+export interface MarketStatusResponse {
+  isOpen: boolean;
+  label: 'OPEN' | 'CLOSED';
+  session: string;
+  source: 'nepalstock' | 'sharesansar' | 'unknown';
+  asOf: string | null;
+}
+
 export interface OhlcCandle {
   t: string;
   o: number;
