@@ -12,6 +12,7 @@ import {
   SignalCheckItem,
   SignalInputData,
   SignalInterval,
+  SignalNotebookAutomationStatus,
   SignalNotebookEntryDto,
   SignalNotebookOutcome,
   SignalNotebookPayload,
@@ -1005,8 +1006,38 @@ export class SignalService implements OnModuleInit, OnModuleDestroy {
       tradeDate: this.toIsoDate(tradeDate),
       generatedAt,
       evaluatedAt,
+      automation: this.buildAutomationStatus(),
       summary,
       entries,
+    };
+  }
+
+  private buildAutomationStatus(): SignalNotebookAutomationStatus {
+    const state = this.getMarketSessionState();
+
+    if (state === 'OPEN') {
+      return {
+        sessionState: state,
+        autoMode: true,
+        nextAction: 'Auto-generate and refresh today notebook',
+        note: 'Notebook entries are updated automatically during market session.',
+      };
+    }
+
+    if (state === 'POST_CLOSE') {
+      return {
+        sessionState: state,
+        autoMode: true,
+        nextAction: 'Auto-evaluate pending entries against close snapshot',
+        note: 'Post-close evaluation runs automatically after market close window.',
+      };
+    }
+
+    return {
+      sessionState: state,
+      autoMode: true,
+      nextAction: 'Stand by for next market session',
+      note: 'Market is closed. Last generated notebook remains visible.',
     };
   }
 

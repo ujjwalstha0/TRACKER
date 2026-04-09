@@ -99,6 +99,12 @@ function formatTimestamp(value: string | null | undefined): string {
   return new Date(value).toLocaleString();
 }
 
+function notebookSessionClass(sessionState: string): string {
+  if (sessionState === 'OPEN') return 'text-terminal-green';
+  if (sessionState === 'POST_CLOSE') return 'text-terminal-amber';
+  return 'text-zinc-300';
+}
+
 function severityClasses(severity: AlertSeverity): string {
   if (severity === 'HIGH') return 'border-terminal-red/70 bg-terminal-red/20 text-terminal-red';
   if (severity === 'MEDIUM') return 'border-terminal-amber/70 bg-terminal-amber/20 text-terminal-amber';
@@ -824,6 +830,7 @@ export function EdgeSuiteTerminalPage({ user }: { user: AuthUser | null }) {
   }, [notebook?.entries]);
 
   const notebookSummary = notebook?.summary ?? null;
+  const notebookAutomation = notebook?.automation ?? null;
 
   return (
     <section className="space-y-6">
@@ -912,6 +919,29 @@ export function EdgeSuiteTerminalPage({ user }: { user: AuthUser | null }) {
               <p className="mt-2 font-mono text-lg font-bold text-white">{formatPercent(notebookSummary?.averageAccuracyPct ?? 0)}</p>
             </div>
           </div>
+
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+              <p className="text-xs uppercase tracking-wide text-zinc-500">Auto Mode</p>
+              <p className="mt-2 font-mono text-sm text-zinc-100">
+                {notebookAutomation?.autoMode ? 'ENABLED' : 'DISABLED'}
+              </p>
+            </div>
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+              <p className="text-xs uppercase tracking-wide text-zinc-500">Session State</p>
+              <p className={`mt-2 font-mono text-sm ${notebookSessionClass(notebookAutomation?.sessionState ?? 'CLOSED')}`}>
+                {notebookAutomation?.sessionState ?? 'CLOSED'}
+              </p>
+            </div>
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+              <p className="text-xs uppercase tracking-wide text-zinc-500">Next Auto Action</p>
+              <p className="mt-2 text-xs text-zinc-300">{notebookAutomation?.nextAction ?? '-'}</p>
+            </div>
+          </div>
+
+          <p className="text-xs text-zinc-500">
+            {notebookAutomation?.note ?? 'Notebook automation status will appear after first payload sync.'}
+          </p>
 
           <p className="text-xs text-zinc-500">
             Generated: {formatTimestamp(notebook?.generatedAt)} | Evaluated: {formatTimestamp(notebook?.evaluatedAt)}

@@ -8,6 +8,7 @@ const DEFAULT_LIMIT = 30;
 const MAX_LIMIT = 80;
 const RECENT_DAYS_WINDOW = 5;
 const MIN_RELEVANCE_SCORE = 4;
+const RELAXED_RELEVANCE_SCORE = 2;
 
 const NEWS_SOURCES: Array<{ key: string; url: string; selectors: string[] }> = [
   {
@@ -65,34 +66,13 @@ export class NewsService {
     }
 
     const parsed = await this.fetchAndParseAllSources(new Date(now));
-    const merged: EconomicNewsItem[] = [];
-
-    for (const item of parsed) {
-      const tags = this.detectTags(item.headline);
-      const relevanceScore = this.computeRelevanceScore(item.headline, tags);
-
-      if (!this.isUsefulForUsers(item.headline, tags, relevanceScore)) {
-        continue;
-      }
-
-      merged.push({
-        headline: item.headline,
-        url: item.url,
-        source: item.source,
-        publishedDate: item.publishedDate,
-        impact: this.toImpact(relevanceScore),
-        relevanceScore,
-        tags,
-      });
-    }
-
-    merged.sort((a, b) => {
+    const curated = this.curateUsefulItems(parsed).sort((a, b) => {
       const dateA = Date.parse(a.publishedDate ?? '1970-01-01');
       const dateB = Date.parse(b.publishedDate ?? '1970-01-01');
       return dateB - dateA || b.relevanceScore - a.relevanceScore;
     });
 
-    const limited = merged.slice(0, MAX_LIMIT);
+    const limited = curated.slice(0, MAX_LIMIT);
 
     const payload: EconomicNewsResponse = {
       asOf: new Date(now).toISOString(),
@@ -111,6 +91,46 @@ export class NewsService {
     };
 
     return payload;
+  }
+
+  private curateUsefulItems(parsed: ParsedNewsSourceItem[]): EconomicNewsItem[] {
+    const scored = parsed.map((item) => {
+      const tags = this.detectTags(item.headline);
+      const relevanceScore = this.computeRelevanceScore(item.headline, tags);
+
+      return {
+        headline: item.headline,
+        url: item.url,
+        source: item.source,
+        publishedDate: item.publishedDate,
+        impact: this.toImpact(relevanceScore),
+        relevanceScore,
+        tags,
+      } satisfies EconomicNewsItem;
+    });
+
+    const strict = scored.filter((item) =>
+      this.isUsefulForUsers(item.headline, item.tags, item.relevanceScore),
+    );
+
+    if (strict.length >= 8) {
+      return strict;
+    }
+
+    const strictUrls = new Set(strict.map((item) => item.url));
+    const relaxed = scored.filter((item) => {
+      if (strictUrls.has(item.url)) {
+        return false;
+      }
+
+      if (item.relevanceScore < RELAXED_RELEVANCE_SCORE) {
+        return false;
+      }
+
+      return !this.isLikelyNoiseHeadline(item.headline);
+    });
+
+    return [...strict, ...relaxed];
   }
 
   private async fetchAndParseAllSources(now: Date): Promise<ParsedNewsSourceItem[]> {
@@ -321,6 +341,11 @@ export class NewsService {
     return /(nepse index|market turnover|market capitalization|liquidity crunch|credit growth)/.test(lower);
   }
 
+  private isLikelyNoiseHeadline(headline: string): boolean {
+    const lower = headline.toLowerCase();
+    return /(vacancy|career|sponsored|advertisement|event registration)/.test(lower);
+  }
+
   private toImpact(score: number): NewsImpactLevel {
     if (score >= 7) return 'HIGH';
     if (score >= 4) return 'MEDIUM';
@@ -353,6 +378,28 @@ export class NewsService {
 
   private extractDateFromText(rawText: string): string | null {
     const text = rawText.replace(/\s+/g, ' ');
+    const isoMatch = text.match(/(20\d{2})[-\/](\d{1,2})[-\/](\d{1,2})/);
+    if (isoMatch) {
+      const year = Number(isoMatch[1]);
+      const month = Number(isoMatch[2]);
+      const day = Number(isoMatch[3]);
+
+      if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+        return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      }
+    }
+
+    const dmyMatch = text.match(/(\d{1,2})[-\/](\d{1,2})[-\/](20\d{2})/);
+    if (dmyMatch) {
+      const day = Number(dmyMatch[1]);
+      const month = Number(dmyMatch[2]);
+      const year = Number(dmyMatch[3]);
+
+      if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+        return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      }
+    }
+
     const match = text.match(
       /(\d{1,2})\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[,\s]+(20\d{2})/i,
     );

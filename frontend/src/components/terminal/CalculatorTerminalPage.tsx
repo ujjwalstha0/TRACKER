@@ -47,6 +47,31 @@ interface RiskPlanSummary {
   warning: string | null;
 }
 
+type DecisionSide = 'BUY' | 'SELL';
+type DecisionOutcome = 'PENDING' | 'CORRECT' | 'PARTIAL' | 'WRONG' | 'SKIPPED';
+
+interface DecisionDraft {
+  side: DecisionSide;
+  symbol: string;
+  reason: string;
+  plan: string;
+  confidence: string;
+}
+
+interface DecisionEntry {
+  id: string;
+  createdAt: string;
+  tradeDate: string;
+  side: DecisionSide;
+  symbol: string;
+  reason: string;
+  plan: string;
+  confidence: number;
+  outcome: DecisionOutcome;
+  reviewNote: string;
+  reviewedAt: string | null;
+}
+
 type ChecklistKey =
   | 'trendConfirmed'
   | 'entryTrigger'
@@ -76,6 +101,17 @@ const INITIAL_CHECKLIST: Record<ChecklistKey, boolean> = {
   riskWithinLimit: false,
   rewardAtLeast2R: false,
   newsChecked: false,
+};
+
+const DECISION_STORAGE_KEY = 'tracker.execution.decision-journal.v1';
+const MAX_DECISION_ENTRIES = 120;
+
+const INITIAL_DECISION_DRAFT: DecisionDraft = {
+  side: 'BUY',
+  symbol: '',
+  reason: '',
+  plan: '',
+  confidence: '3',
 };
 
 const INITIAL_FORM: FormState = {
@@ -123,6 +159,9 @@ export function CalculatorTerminalPage() {
   const [scenario, setScenario] = useState<ScenarioResult | null>(null);
   const [riskPlan, setRiskPlan] = useState<RiskPlanState>(INITIAL_RISK_PLAN);
   const [checklist, setChecklist] = useState<Record<ChecklistKey, boolean>>(INITIAL_CHECKLIST);
+  const [decisionDraft, setDecisionDraft] = useState<DecisionDraft>(INITIAL_DECISION_DRAFT);
+  const [decisionEntries, setDecisionEntries] = useState<DecisionEntry[]>([]);
+  const [decisionError, setDecisionError] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -131,6 +170,43 @@ export function CalculatorTerminalPage() {
       .then((rows) => setWatchlist(rows))
       .catch(() => setWatchlist([]));
   }, []);
+
+  useEffect(() => {
+    setDecisionDraft((previous) => ({
+      ...previous,
+      side: form.side === 'buy' ? 'BUY' : 'SELL',
+    }));
+  }, [form.side]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    try {
+      const raw = window.localStorage.getItem(DECISION_STORAGE_KEY);
+      if (!raw) return;
+
+      const parsed = JSON.parse(raw) as DecisionEntry[];
+      if (!Array.isArray(parsed)) return;
+
+      const normalized = parsed
+        .filter((entry) => entry && typeof entry.id === 'string')
+        .map((entry) => ({
+          ...entry,
+          outcome: entry.outcome ?? 'PENDING',
+          reviewNote: entry.reviewNote ?? '',
+          reviewedAt: entry.reviewedAt ?? null,
+        }));
+
+      setDecisionEntries(normalized.slice(0, MAX_DECISION_ENTRIES));
+    } catch {
+      setDecisionEntries([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(DECISION_STORAGE_KEY, JSON.stringify(decisionEntries));
+  }, [decisionEntries]);
 
   const applySymbol = (symbolInput: string) => {
     const lookup = symbolInput.trim().toLowerCase();
@@ -248,6 +324,102 @@ export function CalculatorTerminalPage() {
     () => Object.values(checklist).filter(Boolean).length,
     [checklist],
   );
+
+  const decisionSummary = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    const todayEntries = decisionEntries.filter((entry) => entry.tradeDate === today);
+    const reviewed = todayEntries.filter((entry) => entry.outcome !== 'PENDING');
+    const correct = reviewed.filter((entry) => entry.outcome === 'CORRECT').length;
+
+    return {
+      totalToday: todayEntries.length,
+      reviewedToday: reviewed.length,
+      pendingToday: todayEntries.length - reviewed.length,
+      correctToday: correct,
+      hitRate: reviewed.length > 0 ? (correct / reviewed.length) * 100 : 0,
+      latest: [...todayEntries].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 8),
+    };
+  }, [decisionEntries]);
+
+  const syncDraftFromCalculator = () => {
+    setDecisionDraft((previous) => ({
+      ...previous,
+      side: form.side === 'buy' ? 'BUY' : 'SELL',
+      symbol: form.symbol || previous.symbol,
+      plan:
+        form.side === 'buy'
+          ? `Entry ${form.price || '-'} | Target ${form.targetPrice || '-'} | Stop ${form.stopLoss || '-'}`
+          : `Exit ${form.price || '-'} | Buy Ref ${form.buyPrice || '-'} | Holding Days ${form.holdingDays || '-'}`,
+    }));
+  };
+
+  const addDecisionEntry = () => {
+    const symbol = decisionDraft.symbol.trim().toUpperCase();
+    const reason = decisionDraft.reason.trim();
+    const plan = decisionDraft.plan.trim();
+    const confidence = Number(decisionDraft.confidence);
+
+    if (!symbol) {
+      setDecisionError('Symbol is required for decision note.');
+      return;
+    }
+
+    if (reason.length < 8) {
+      setDecisionError('Please add a short reason (minimum 8 characters).');
+      return;
+    }
+
+    if (!Number.isFinite(confidence) || confidence < 1 || confidence > 5) {
+      setDecisionError('Confidence must be between 1 and 5.');
+      return;
+    }
+
+    const now = new Date();
+    const entry: DecisionEntry = {
+      id: `${now.getTime()}-${Math.random().toString(36).slice(2, 8)}`,
+      createdAt: now.toISOString(),
+      tradeDate: now.toISOString().slice(0, 10),
+      side: decisionDraft.side,
+      symbol,
+      reason,
+      plan,
+      confidence,
+      outcome: 'PENDING',
+      reviewNote: '',
+      reviewedAt: null,
+    };
+
+    setDecisionEntries((previous) => [entry, ...previous].slice(0, MAX_DECISION_ENTRIES));
+    setDecisionDraft((previous) => ({
+      ...previous,
+      reason: '',
+      plan: '',
+    }));
+    setDecisionError('');
+  };
+
+  const updateDecisionEntry = (id: string, updates: Partial<DecisionEntry>) => {
+    setDecisionEntries((previous) =>
+      previous.map((entry) => (entry.id === id ? { ...entry, ...updates } : entry)),
+    );
+  };
+
+  const markDecisionReviewed = (id: string) => {
+    setDecisionEntries((previous) =>
+      previous.map((entry) => {
+        if (entry.id !== id) return entry;
+        if (entry.outcome === 'PENDING') {
+          return { ...entry, reviewedAt: null };
+        }
+
+        return { ...entry, reviewedAt: new Date().toISOString() };
+      }),
+    );
+  };
+
+  const deleteDecisionEntry = (id: string) => {
+    setDecisionEntries((previous) => previous.filter((entry) => entry.id !== id));
+  };
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -810,6 +982,180 @@ export function CalculatorTerminalPage() {
             <p className="mt-1 text-xs text-zinc-500">
               Trade only when your process is complete and aligned with your risk plan.
             </p>
+          </div>
+        </article>
+      </section>
+
+      <section className="grid gap-5 xl:grid-cols-2">
+        <article className="terminal-card space-y-4 p-5">
+          <header>
+            <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Optional Reflection</p>
+            <h3 className="mt-1 text-base font-semibold text-white">Execution Decision Diary</h3>
+            <p className="mt-1 text-xs text-zinc-500">
+              Optional notes for why you buy/sell today. Review outcome after market close to improve discipline.
+            </p>
+          </header>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-1">
+              <label className="text-xs font-medium uppercase tracking-wide text-zinc-400">Action</label>
+              <select
+                value={decisionDraft.side}
+                onChange={(event) =>
+                  setDecisionDraft((old) => ({
+                    ...old,
+                    side: event.target.value as DecisionSide,
+                  }))
+                }
+                className="terminal-input"
+              >
+                <option value="BUY">BUY</option>
+                <option value="SELL">SELL</option>
+              </select>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs font-medium uppercase tracking-wide text-zinc-400">Symbol</label>
+              <input
+                value={decisionDraft.symbol}
+                onChange={(event) => setDecisionDraft((old) => ({ ...old, symbol: event.target.value.toUpperCase() }))}
+                className="terminal-input font-mono"
+                placeholder="NABIL"
+              />
+            </div>
+
+            <div className="space-y-1 md:col-span-2">
+              <label className="text-xs font-medium uppercase tracking-wide text-zinc-400">Why this decision?</label>
+              <textarea
+                value={decisionDraft.reason}
+                onChange={(event) => setDecisionDraft((old) => ({ ...old, reason: event.target.value }))}
+                className="terminal-input min-h-[88px]"
+                placeholder="Example: strong trend confirmation, volume pickup, and acceptable risk."
+              />
+            </div>
+
+            <div className="space-y-1 md:col-span-2">
+              <label className="text-xs font-medium uppercase tracking-wide text-zinc-400">Plan / invalidation (optional)</label>
+              <textarea
+                value={decisionDraft.plan}
+                onChange={(event) => setDecisionDraft((old) => ({ ...old, plan: event.target.value }))}
+                className="terminal-input min-h-[70px]"
+                placeholder="Entry/exit reference, risk line, what invalidates the setup."
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs font-medium uppercase tracking-wide text-zinc-400">Confidence (1-5)</label>
+              <select
+                value={decisionDraft.confidence}
+                onChange={(event) => setDecisionDraft((old) => ({ ...old, confidence: event.target.value }))}
+                className="terminal-input"
+              >
+                <option value="1">1 - Low</option>
+                <option value="2">2</option>
+                <option value="3">3 - Medium</option>
+                <option value="4">4</option>
+                <option value="5">5 - High</option>
+              </select>
+            </div>
+
+            <div className="flex items-end gap-2">
+              <button type="button" onClick={syncDraftFromCalculator} className="terminal-btn">
+                Sync From Calculator
+              </button>
+              <button type="button" onClick={addDecisionEntry} className="terminal-btn-primary">
+                Save Note
+              </button>
+            </div>
+          </div>
+
+          {decisionError ? <p className="text-sm text-terminal-red">{decisionError}</p> : null}
+        </article>
+
+        <article className="terminal-card space-y-4 p-5">
+          <header>
+            <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Daily Review</p>
+            <h3 className="mt-1 text-base font-semibold text-white">Decision Evaluation Board</h3>
+          </header>
+
+          <div className="grid gap-3 md:grid-cols-4">
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+              <p className="text-xs uppercase tracking-wide text-zinc-500">Logged Today</p>
+              <p className="mt-2 font-mono text-lg text-white">{decisionSummary.totalToday}</p>
+            </div>
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+              <p className="text-xs uppercase tracking-wide text-zinc-500">Reviewed</p>
+              <p className="mt-2 font-mono text-lg text-terminal-green">{decisionSummary.reviewedToday}</p>
+            </div>
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+              <p className="text-xs uppercase tracking-wide text-zinc-500">Pending</p>
+              <p className="mt-2 font-mono text-lg text-terminal-amber">{decisionSummary.pendingToday}</p>
+            </div>
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+              <p className="text-xs uppercase tracking-wide text-zinc-500">Correct Rate</p>
+              <p className="mt-2 font-mono text-lg text-cyan-200">{decisionSummary.hitRate.toFixed(1)}%</p>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            {decisionSummary.latest.length ? (
+              decisionSummary.latest.map((entry) => (
+                <div key={entry.id} className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="font-mono text-sm text-zinc-100">
+                      {entry.symbol} • {entry.side} • C{entry.confidence}
+                    </p>
+                    <p className="text-xs text-zinc-500">{new Date(entry.createdAt).toLocaleTimeString()}</p>
+                  </div>
+                  <p className="mt-2 text-sm text-zinc-300">{entry.reason}</p>
+                  {entry.plan ? <p className="mt-1 text-xs text-zinc-500">Plan: {entry.plan}</p> : null}
+
+                  <div className="mt-3 grid gap-2 md:grid-cols-2">
+                    <select
+                      value={entry.outcome}
+                      onChange={(event) =>
+                        updateDecisionEntry(entry.id, {
+                          outcome: event.target.value as DecisionOutcome,
+                        })
+                      }
+                      className="terminal-input"
+                    >
+                      <option value="PENDING">Pending Review</option>
+                      <option value="CORRECT">Correct</option>
+                      <option value="PARTIAL">Partially Correct</option>
+                      <option value="WRONG">Wrong</option>
+                      <option value="SKIPPED">Skipped Trade</option>
+                    </select>
+
+                    <button type="button" onClick={() => markDecisionReviewed(entry.id)} className="terminal-btn">
+                      {entry.outcome === 'PENDING' ? 'Keep Pending' : 'Mark Reviewed'}
+                    </button>
+                  </div>
+
+                  <textarea
+                    value={entry.reviewNote}
+                    onChange={(event) =>
+                      updateDecisionEntry(entry.id, {
+                        reviewNote: event.target.value,
+                      })
+                    }
+                    className="terminal-input mt-2 min-h-[70px]"
+                    placeholder="What did you learn from this decision today?"
+                  />
+
+                  <div className="mt-2 flex items-center justify-between">
+                    <p className="text-[11px] text-zinc-500">
+                      Reviewed: {entry.reviewedAt ? new Date(entry.reviewedAt).toLocaleString() : 'Not yet'}
+                    </p>
+                    <button type="button" onClick={() => deleteDecisionEntry(entry.id)} className="terminal-btn text-xs">
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="text-sm text-zinc-500">No decision notes for today yet. Add one from the optional diary section.</p>
+            )}
           </div>
         </article>
       </section>

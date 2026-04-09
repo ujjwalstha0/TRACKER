@@ -158,7 +158,31 @@ export function TradeJournalTerminalPage() {
       <header className="space-y-1">
         <p className="text-xs uppercase tracking-[0.22em] text-zinc-500">Execution Log</p>
         <h1 className="text-2xl font-semibold text-white">Trade Journal</h1>
+        <p className="text-sm text-zinc-400">
+          This module tracks what happened after your trades so you can improve decisions with data, not memory.
+        </p>
       </header>
+
+      <section className="grid gap-4 md:grid-cols-3">
+        <article className="terminal-card p-4">
+          <p className="text-xs uppercase tracking-wide text-zinc-500">Why it exists</p>
+          <p className="mt-2 text-sm text-zinc-300">
+            Keeps an exact execution history and realized outcome, so you know whether your strategy has edge.
+          </p>
+        </article>
+        <article className="terminal-card p-4">
+          <p className="text-xs uppercase tracking-wide text-zinc-500">What to watch</p>
+          <p className="mt-2 text-sm text-zinc-300">
+            Focus on win rate, expectancy, and best/worst trade patterns to identify repeat mistakes.
+          </p>
+        </article>
+        <article className="terminal-card p-4">
+          <p className="text-xs uppercase tracking-wide text-zinc-500">How to improve</p>
+          <p className="mt-2 text-sm text-zinc-300">
+            Pair this with the optional Execution Decision Diary to compare planned reason vs actual result daily.
+          </p>
+        </article>
+      </section>
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <article className="terminal-card p-4">

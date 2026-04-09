@@ -180,6 +180,7 @@ export interface ChangePasswordPayload {
 export type TradingSignalKind = 'BUY' | 'SELL' | 'HOLD';
 export type TradingSignalConfidence = 'HIGH' | 'MEDIUM' | 'LOW';
 export type SignalInterval = '1m' | '5m' | '15m' | '1h' | '1d';
+export type SignalNotebookSessionState = 'OPEN' | 'POST_CLOSE' | 'CLOSED';
 export type SignalNotebookOutcome =
   | 'PENDING'
   | 'HIT_TARGET'
@@ -187,6 +188,13 @@ export type SignalNotebookOutcome =
   | 'MOVED_IN_FAVOR'
   | 'MOVED_AGAINST'
   | 'FLAT';
+
+export interface SignalNotebookAutomationStatus {
+  sessionState: SignalNotebookSessionState;
+  autoMode: boolean;
+  nextAction: string;
+  note: string;
+}
 
 export interface SignalCheckItem {
   key: string;
@@ -276,6 +284,7 @@ export interface SignalNotebookResponse {
   tradeDate: string;
   generatedAt: string | null;
   evaluatedAt: string | null;
+  automation: SignalNotebookAutomationStatus;
   summary: SignalNotebookSummary;
   entries: SignalNotebookEntry[];
 }
