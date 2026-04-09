@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, NavLink, Route, Routes } from 'react-router-dom';
 import { AuthTerminalPage } from './components/terminal/AuthTerminalPage';
 import { CalculatorTerminalPage } from './components/terminal/CalculatorTerminalPage';
@@ -39,11 +39,43 @@ function ProtectedPage({ user, children }: { user: AuthUser | null; children: JS
   return children;
 }
 
+function getMarketStatus(now: Date): { isOpen: boolean; label: 'OPEN' | 'CLOSED' } {
+  const formatter = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kathmandu',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+
+  const parts = formatter.formatToParts(now);
+  const weekday = parts.find((part) => part.type === 'weekday')?.value ?? '';
+  const hour = Number(parts.find((part) => part.type === 'hour')?.value ?? '0');
+  const minute = Number(parts.find((part) => part.type === 'minute')?.value ?? '0');
+
+  const tradingDays = new Set(['Sun', 'Mon', 'Tue', 'Wed', 'Thu']);
+  const minuteOfDay = hour * 60 + minute;
+  const isOpenWindow = minuteOfDay >= 11 * 60 && minuteOfDay < 15 * 60;
+  const isOpen = tradingDays.has(weekday) && isOpenWindow;
+
+  return {
+    isOpen,
+    label: isOpen ? 'OPEN' : 'CLOSED',
+  };
+}
+
+function getUserInitial(user: AuthUser): string {
+  const source = user.displayName?.trim() || user.email.trim();
+  return source.charAt(0).toUpperCase() || 'U';
+}
+
 export default function App() {
   const [usePureBlack, setUsePureBlack] = useState(true);
   const [now, setNow] = useState(() => new Date());
   const [user, setUser] = useState<AuthUser | null>(() => getStoredUser());
   const [authChecking, setAuthChecking] = useState(true);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     document.documentElement.classList.add('dark');
@@ -76,11 +108,40 @@ export default function App() {
       .finally(() => setAuthChecking(false));
   }, []);
 
+  useEffect(() => {
+    const onPointerDown = (event: MouseEvent) => {
+      if (!userMenuRef.current) return;
+
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+
+      if (!userMenuRef.current.contains(target)) {
+        setUserMenuOpen(false);
+      }
+    };
+
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setUserMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onEscape);
+
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onEscape);
+    };
+  }, []);
+
   const shellClassName = useMemo(() => {
     return usePureBlack
       ? 'min-h-screen bg-[#060b10] text-white'
       : 'min-h-screen bg-[#0a1621] text-white';
   }, [usePureBlack]);
+
+  const marketStatus = useMemo(() => getMarketStatus(now), [now]);
 
   const allNav = user ? [...PUBLIC_NAV, ...PRIVATE_NAV] : PUBLIC_NAV;
 
@@ -115,26 +176,51 @@ export default function App() {
           </nav>
 
           <div className="ml-auto flex items-center gap-3">
+            <span
+              className={
+                marketStatus.isOpen
+                  ? 'rounded-md border border-terminal-green/60 bg-terminal-green/15 px-3 py-1.5 font-mono text-xs font-semibold tracking-wide text-terminal-green'
+                  : 'rounded-md border border-terminal-red/60 bg-terminal-red/15 px-3 py-1.5 font-mono text-xs font-semibold tracking-wide text-terminal-red'
+              }
+            >
+              ● MARKET {marketStatus.label}
+            </span>
+
             <span className="hidden rounded-md border border-zinc-700/90 bg-zinc-950/80 px-3 py-1.5 font-mono text-xs text-zinc-300 lg:inline-flex">
               {now.toLocaleString()}
             </span>
 
             {user ? (
-              <>
-                <span className="hidden rounded-md border border-zinc-700/90 bg-zinc-950/80 px-3 py-1.5 text-xs font-medium text-zinc-300 lg:inline-flex">
-                  {user.displayName || user.email}
-                </span>
+              <div className="relative" ref={userMenuRef}>
                 <button
                   type="button"
-                  onClick={() => {
-                    clearAuthSession();
-                    setUser(null);
-                  }}
-                  className="rounded-lg border border-zinc-700/90 bg-zinc-950/80 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-200 hover:border-cyan-500/60"
+                  onClick={() => setUserMenuOpen((old) => !old)}
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-cyan-500/60 bg-cyan-500/20 text-sm font-semibold text-cyan-100 transition hover:border-cyan-300"
+                  aria-label="User menu"
                 >
-                  Logout
+                  {getUserInitial(user)}
                 </button>
-              </>
+
+                {userMenuOpen ? (
+                  <div className="absolute right-0 top-11 z-50 w-64 rounded-xl border border-zinc-700/90 bg-zinc-950/95 p-3 shadow-terminal backdrop-blur">
+                    <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Signed In</p>
+                    <p className="mt-1 truncate text-sm font-semibold text-zinc-100">{user.displayName || user.email}</p>
+                    <p className="truncate text-xs text-zinc-400">{user.email}</p>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        clearAuthSession();
+                        setUser(null);
+                        setUserMenuOpen(false);
+                      }}
+                      className="mt-3 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-200 hover:border-cyan-500/60"
+                    >
+                      Logout
+                    </button>
+                  </div>
+                ) : null}
+              </div>
             ) : (
               <NavLink
                 to="/auth"
