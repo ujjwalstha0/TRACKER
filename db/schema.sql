@@ -90,3 +90,45 @@ CREATE INDEX IF NOT EXISTS "SignalNotebookEntry_tradeDate_idx"
 
 CREATE INDEX IF NOT EXISTS "SignalNotebookEntry_tradeDate_evaluatedAt_idx"
   ON "SignalNotebookEntry" ("tradeDate", "evaluatedAt");
+
+CREATE TABLE IF NOT EXISTS "User" (
+  "id" BIGSERIAL PRIMARY KEY,
+  "email" VARCHAR(255) NOT NULL,
+  "passwordHash" VARCHAR(255) NOT NULL,
+  "displayName" VARCHAR(120),
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS "User_email_key"
+  ON "User" ("email");
+
+CREATE TABLE IF NOT EXISTS "ExecutionDecision" (
+  "id" BIGSERIAL PRIMARY KEY,
+  "userId" BIGINT NOT NULL,
+  "tradeDate" DATE NOT NULL,
+  "side" VARCHAR(10) NOT NULL,
+  "symbol" VARCHAR(20) NOT NULL,
+  "reason" VARCHAR(600) NOT NULL,
+  "plan" VARCHAR(600),
+  "confidence" INTEGER NOT NULL,
+  "outcome" VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+  "reviewNote" VARCHAR(800),
+  "reviewedAt" TIMESTAMP(3),
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "ExecutionDecision_userId_fkey"
+    FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS "ExecutionDecision_userId_idx"
+  ON "ExecutionDecision" ("userId");
+
+CREATE INDEX IF NOT EXISTS "ExecutionDecision_userId_tradeDate_idx"
+  ON "ExecutionDecision" ("userId", "tradeDate");
+
+CREATE INDEX IF NOT EXISTS "ExecutionDecision_tradeDate_idx"
+  ON "ExecutionDecision" ("tradeDate");
+
+CREATE INDEX IF NOT EXISTS "ExecutionDecision_createdAt_idx"
+  ON "ExecutionDecision" ("createdAt");

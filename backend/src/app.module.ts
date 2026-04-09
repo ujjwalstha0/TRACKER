@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from './auth/auth.module';
 import scrapeConfig from './config/scrape.config';
+import { ExecutionDecisionsModule } from './execution-decisions/execution-decisions.module';
 import { FeesModule } from './fees/fees.module';
 import { IndicatorsModule } from './indicators/indicators.module';
 import { IndicesModule } from './indices/indices.module';
@@ -38,6 +39,7 @@ import { WatchlistModule } from './watchlist/watchlist.module';
     }),
     FeesModule,
     AuthModule,
+    ExecutionDecisionsModule,
     PortfolioModule,
     TradesModule,
     WatchlistModule,

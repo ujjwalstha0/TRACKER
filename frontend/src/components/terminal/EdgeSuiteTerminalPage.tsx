@@ -94,6 +94,18 @@ function formatCompactPrice(value: number | null | undefined): string {
   return formatMoney(value);
 }
 
+function compactPlanSummary(signal: TradingSignalResponse | undefined): string {
+  if (!signal?.plan) {
+    return '-';
+  }
+
+  if (signal.signal === 'SELL') {
+    return `Exit ${formatCompactPrice(signal.plan.entryPrice)} | Risk ${formatCompactPrice(signal.plan.stopLoss)}`;
+  }
+
+  return `E ${formatCompactPrice(signal.plan.entryPrice)} | SL ${formatCompactPrice(signal.plan.stopLoss)} | TP ${formatCompactPrice(signal.plan.targetPrice)}`;
+}
+
 function formatTimestamp(value: string | null | undefined): string {
   if (!value) return '-';
   return new Date(value).toLocaleString();
@@ -1178,15 +1190,12 @@ export function EdgeSuiteTerminalPage({ user }: { user: AuthUser | null }) {
                 <ul className="mt-2 space-y-1 text-sm text-zinc-300">
                   {playbook.topBuy.length ? (
                     playbook.topBuy.map((row) => (
-                      <li key={`buy-${row.symbol}`} className="flex items-center justify-between gap-3">
-                        <span className="font-mono text-zinc-100">{row.symbol}</span>
-                        <span className="text-xs text-zinc-400">
-                          {row.signal?.signal ?? 'HOLD'} S{row.signal?.strength ?? 0}
-                          {row.signal?.plan
-                            ? ` | E ${formatCompactPrice(row.signal.plan.entryPrice)} / SL ${formatCompactPrice(row.signal.plan.stopLoss)} / TP ${formatCompactPrice(row.signal.plan.targetPrice)}`
-                            : ''}
-                          {` | T ₹ ${formatMoney(row.turnover ?? 0)}`}
-                        </span>
+                      <li key={`buy-${row.symbol}`} className="rounded-md border border-zinc-800/80 bg-zinc-950/60 px-2 py-1.5">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="font-mono text-zinc-100">{row.symbol}</span>
+                          <span className="text-xs text-zinc-500">{row.signal?.signal ?? 'HOLD'} S{row.signal?.strength ?? 0}</span>
+                        </div>
+                        <p className="mt-1 text-[11px] text-zinc-400">{compactPlanSummary(row.signal)}</p>
                       </li>
                     ))
                   ) : (
@@ -1200,17 +1209,12 @@ export function EdgeSuiteTerminalPage({ user }: { user: AuthUser | null }) {
                 <ul className="mt-2 space-y-1 text-sm text-zinc-300">
                   {playbook.topSell.length ? (
                     playbook.topSell.map((row) => (
-                      <li key={`sell-${row.symbol}`} className="flex items-center justify-between gap-3">
-                        <span className="font-mono text-zinc-100">{row.symbol}</span>
-                        <span className="text-xs text-zinc-400">
-                          {row.signal?.signal ?? 'HOLD'} S{row.signal?.strength ?? 0}
-                          {row.signal?.plan
-                            ? row.signal.signal === 'SELL'
-                              ? ` | Exit ${formatCompactPrice(row.signal.plan.entryPrice)} / Risk ${formatCompactPrice(row.signal.plan.stopLoss)} / Support ${formatCompactPrice(row.signal.plan.targetPrice)}`
-                              : ` | E ${formatCompactPrice(row.signal.plan.entryPrice)} / SL ${formatCompactPrice(row.signal.plan.stopLoss)} / TP ${formatCompactPrice(row.signal.plan.targetPrice)}`
-                            : ''}
-                          {` | T ₹ ${formatMoney(row.turnover ?? 0)}`}
-                        </span>
+                      <li key={`sell-${row.symbol}`} className="rounded-md border border-zinc-800/80 bg-zinc-950/60 px-2 py-1.5">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="font-mono text-zinc-100">{row.symbol}</span>
+                          <span className="text-xs text-zinc-500">{row.signal?.signal ?? 'HOLD'} S{row.signal?.strength ?? 0}</span>
+                        </div>
+                        <p className="mt-1 text-[11px] text-zinc-400">{compactPlanSummary(row.signal)}</p>
                       </li>
                     ))
                   ) : (

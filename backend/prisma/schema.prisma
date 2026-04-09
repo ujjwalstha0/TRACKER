@@ -49,6 +49,7 @@ model User {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
   holdings     Holding[]
+  executionDecisions ExecutionDecision[]
 }
 
 model Holding {
@@ -120,4 +121,26 @@ model SignalNotebookEntry {
   @@unique([tradeDate, symbol])
   @@index([tradeDate])
   @@index([tradeDate, evaluatedAt])
+}
+
+model ExecutionDecision {
+  id         BigInt   @id @default(autoincrement())
+  userId     BigInt
+  tradeDate  DateTime @db.Date
+  side       String   @db.VarChar(10)
+  symbol     String   @db.VarChar(20)
+  reason     String   @db.VarChar(600)
+  plan       String?  @db.VarChar(600)
+  confidence Int
+  outcome    String   @default("PENDING") @db.VarChar(20)
+  reviewNote String?  @db.VarChar(800)
+  reviewedAt DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, tradeDate])
+  @@index([tradeDate])
+  @@index([createdAt])
 }

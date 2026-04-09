@@ -45,7 +45,12 @@ const SIGNAL_INTERVAL_CANDIDATES: ReadonlyArray<{
 ];
 
 const SIGNAL_CACHE_TTL_MS = 10_000;
-const SIGNAL_QUALITY_GATE = 60;
+const SIGNAL_BUY_QUALITY_GATE = 74;
+const SIGNAL_SELL_QUALITY_GATE = 78;
+const SIGNAL_MIN_QUALITY_GAP = 12;
+const SIGNAL_MIN_TREND_DISTANCE_PCT = 0.0022;
+const SIGNAL_WHIPSAW_WINDOW_MS = 20 * 60 * 1000;
+const SIGNAL_REVERSAL_OVERRIDE_QUALITY = 88;
 const TARGET_RISK_MULTIPLIER = 2.2;
 const MIN_STOP_DISTANCE_PCT = 0.012;
 const NOTEBOOK_DEFAULT_LIMIT = 45;
@@ -96,6 +101,10 @@ interface SignalCandleSelection {
 export class SignalService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SignalService.name);
   private readonly signalCache = new Map<string, { fetchedAt: number; result: TradingSignalResult }>();
+  private readonly stabilityCache = new Map<
+    string,
+    { signal: Exclude<TradingSignalKind, 'HOLD'>; qualityScore: number; at: number }
+  >();
   private readonly lastLivePersistAt = new Map<string, number>();
   private autoNotebookTimer: NodeJS.Timeout | null = null;
   private autoNotebookRunning = false;
@@ -205,12 +214,15 @@ export class SignalService implements OnModuleInit, OnModuleDestroy {
           })
         : undefined;
 
-    const result = this.calculateTradingSignal(
+    const rawResult = this.calculateTradingSignal(
       data,
       prevData,
       selection.interval,
       new Date(now).toISOString(),
     );
+
+    const result = this.applySignalStabilityFilter(normalizedSymbol, rawResult, now);
+
     this.signalCache.set(normalizedSymbol, {
       fetchedAt: now,
       result,
@@ -523,6 +535,7 @@ export class SignalService implements OnModuleInit, OnModuleDestroy {
     const sellReasons: string[] = [];
     const hasValidBands =
       Number.isFinite(data.bbLower) && Number.isFinite(data.bbUpper) && data.bbUpper > data.bbLower;
+    const trendDistancePct = Math.abs(data.ema8 - data.ema21) / Math.max(data.close, 0.0001);
 
     const emaBull = data.ema8 > data.ema21;
     const emaBear = data.ema8 < data.ema21;
@@ -627,6 +640,27 @@ export class SignalService implements OnModuleInit, OnModuleDestroy {
         weight: 18,
       },
       {
+        key: 'price_above_ema20',
+        label: 'Price is above EMA20',
+        required: true,
+        passed: data.close >= data.ema20,
+        weight: 14,
+      },
+      {
+        key: 'trend_distance_buy',
+        label: 'EMA8/EMA21 separation confirms trend strength',
+        required: true,
+        passed: trendDistancePct >= SIGNAL_MIN_TREND_DISTANCE_PCT,
+        weight: 12,
+      },
+      {
+        key: 'previous_bar_alignment_buy',
+        label: 'Previous bar also aligned bullish',
+        required: true,
+        passed: prevData ? prevData.ema8 > prevData.ema21 && prevData.close > prevData.vwap : true,
+        weight: 10,
+      },
+      {
         key: 'volume_confirmation',
         label: 'Volume confirms with 20-period average',
         required: false,
@@ -672,6 +706,27 @@ export class SignalService implements OnModuleInit, OnModuleDestroy {
         weight: 18,
       },
       {
+        key: 'price_below_ema20',
+        label: 'Price is below EMA20',
+        required: true,
+        passed: data.close <= data.ema20,
+        weight: 14,
+      },
+      {
+        key: 'trend_distance_sell',
+        label: 'EMA8/EMA21 separation confirms downtrend strength',
+        required: true,
+        passed: trendDistancePct >= SIGNAL_MIN_TREND_DISTANCE_PCT,
+        weight: 12,
+      },
+      {
+        key: 'previous_bar_alignment_sell',
+        label: 'Previous bar also aligned bearish',
+        required: true,
+        passed: prevData ? prevData.ema8 < prevData.ema21 && prevData.close < prevData.vwap : true,
+        weight: 10,
+      },
+      {
         key: 'volume_confirmation_down',
         label: 'Volume confirms with 20-period average',
         required: false,
@@ -698,17 +753,22 @@ export class SignalService implements OnModuleInit, OnModuleDestroy {
       .filter((item) => item.required)
       .every((item) => item.passed);
 
+    const qualityGapBuy = buyQuality - sellQuality;
+    const qualityGapSell = sellQuality - buyQuality;
+
     const isStrongBuy =
       hasBuyConfluence &&
       buyScore >= TRADING_SIGNALS.BUY_MEDIUM &&
-      buyScore >= sellScore + 1 &&
-      buyQuality >= SIGNAL_QUALITY_GATE;
+      buyScore >= sellScore + 2 &&
+      buyQuality >= SIGNAL_BUY_QUALITY_GATE &&
+      qualityGapBuy >= SIGNAL_MIN_QUALITY_GAP;
 
     const isStrongSell =
       hasSellConfluence &&
       sellScore >= TRADING_SIGNALS.SELL_MEDIUM &&
-      sellScore >= buyScore + 1 &&
-      sellQuality >= SIGNAL_QUALITY_GATE;
+      sellScore >= buyScore + 2 &&
+      sellQuality >= SIGNAL_SELL_QUALITY_GATE &&
+      qualityGapSell >= SIGNAL_MIN_QUALITY_GAP;
 
     const signal: TradingSignalKind = isStrongBuy ? 'BUY' : isStrongSell ? 'SELL' : 'HOLD';
 
@@ -779,6 +839,68 @@ export class SignalService implements OnModuleInit, OnModuleDestroy {
       interval,
       generatedAt,
     };
+  }
+
+  private applySignalStabilityFilter(
+    symbol: string,
+    result: TradingSignalResult,
+    now: number,
+  ): TradingSignalResult {
+    if (result.signal === 'HOLD') {
+      return result;
+    }
+
+    const previous = this.stabilityCache.get(symbol);
+    if (!previous) {
+      this.stabilityCache.set(symbol, {
+        signal: result.signal,
+        qualityScore: result.qualityScore,
+        at: now,
+      });
+
+      return result;
+    }
+
+    const flippedDirection = previous.signal !== result.signal;
+    if (!flippedDirection) {
+      this.stabilityCache.set(symbol, {
+        signal: result.signal,
+        qualityScore: result.qualityScore,
+        at: now,
+      });
+
+      return result;
+    }
+
+    const withinWhipsawWindow = now - previous.at <= SIGNAL_WHIPSAW_WINDOW_MS;
+    const reversalStrength = Math.abs(result.buyScore - result.sellScore);
+
+    if (
+      withinWhipsawWindow &&
+      result.qualityScore < SIGNAL_REVERSAL_OVERRIDE_QUALITY &&
+      reversalStrength < 4
+    ) {
+      return {
+        ...result,
+        signal: 'HOLD',
+        confidence: 'LOW',
+        recommendedAction: 'WAIT',
+        plan: null,
+        reasons: [
+          `Whipsaw filter: recent ${previous.signal} bias not invalidated strongly enough yet.`,
+          ...result.reasons.slice(0, 2),
+        ],
+        failedChecks: [...result.failedChecks, 'Stability filter blocked fast reversal'],
+      };
+    }
+
+    this.stabilityCache.set(symbol, {
+      signal: result.signal,
+      qualityScore: result.qualityScore,
+      at: now,
+    });
+
+    return result;
   }
 
   private buildReasons(

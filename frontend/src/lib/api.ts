@@ -2,8 +2,10 @@ import {
   AuthResponse,
   AuthUser,
   ChangePasswordPayload,
+  CreateExecutionDecisionPayload,
   CreateHoldingPayload,
   EconomicNewsResponse,
+  ExecutionDecisionEntry,
   FeeCalculationInput,
   FeeCalculationResult,
   IndexApiRow,
@@ -17,6 +19,7 @@ import {
   SignalNotebookResponse,
   TradingSignalResponse,
   TradeRow,
+  UpdateExecutionDecisionPayload,
   WatchlistApiRow,
 } from '../types';
 import { clearAuthSession, getAuthToken } from './auth';
@@ -453,6 +456,79 @@ export async function updateHolding(id: number, payload: Partial<CreateHoldingPa
 
 export async function removeHolding(id: number): Promise<void> {
   const res = await fetch(`${API_BASE}/portfolio/holdings/${id}`, {
+    method: 'DELETE',
+    headers: {
+      ...authHeaderOrThrow(),
+    },
+  });
+
+  if (!res.ok) {
+    return handleProtectedFailure(res);
+  }
+}
+
+export async function fetchExecutionDecisions(params?: {
+  tradeDate?: string;
+  limit?: number;
+}): Promise<ExecutionDecisionEntry[]> {
+  const searchParams = new URLSearchParams();
+  if (params?.tradeDate) searchParams.set('tradeDate', params.tradeDate);
+  if (params?.limit) searchParams.set('limit', String(params.limit));
+
+  const qs = searchParams.toString();
+  const res = await fetch(`${API_BASE}/execution-decisions${qs ? `?${qs}` : ''}`, {
+    headers: {
+      ...authHeaderOrThrow(),
+    },
+    cache: 'no-store',
+  });
+
+  if (!res.ok) {
+    return handleProtectedFailure(res);
+  }
+
+  return res.json();
+}
+
+export async function createExecutionDecision(payload: CreateExecutionDecisionPayload): Promise<ExecutionDecisionEntry> {
+  const res = await fetch(`${API_BASE}/execution-decisions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaderOrThrow(),
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    return handleProtectedFailure(res);
+  }
+
+  return res.json();
+}
+
+export async function updateExecutionDecision(
+  id: number,
+  payload: UpdateExecutionDecisionPayload,
+): Promise<ExecutionDecisionEntry> {
+  const res = await fetch(`${API_BASE}/execution-decisions/${id}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaderOrThrow(),
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    return handleProtectedFailure(res);
+  }
+
+  return res.json();
+}
+
+export async function removeExecutionDecision(id: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/execution-decisions/${id}`, {
     method: 'DELETE',
     headers: {
       ...authHeaderOrThrow(),

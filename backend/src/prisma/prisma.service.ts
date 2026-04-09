@@ -144,6 +144,39 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     await this.$executeRawUnsafe('CREATE UNIQUE INDEX IF NOT EXISTS "User_email_key" ON "User" ("email");');
 
     await this.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "ExecutionDecision" (
+        "id" BIGSERIAL PRIMARY KEY,
+        "userId" BIGINT NOT NULL,
+        "tradeDate" DATE NOT NULL,
+        "side" VARCHAR(10) NOT NULL,
+        "symbol" VARCHAR(20) NOT NULL,
+        "reason" VARCHAR(600) NOT NULL,
+        "plan" VARCHAR(600),
+        "confidence" INTEGER NOT NULL,
+        "outcome" VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+        "reviewNote" VARCHAR(800),
+        "reviewedAt" TIMESTAMP(3),
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT "ExecutionDecision_userId_fkey"
+          FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE
+      );
+    `);
+
+    await this.$executeRawUnsafe(
+      'CREATE INDEX IF NOT EXISTS "ExecutionDecision_userId_idx" ON "ExecutionDecision" ("userId");',
+    );
+    await this.$executeRawUnsafe(
+      'CREATE INDEX IF NOT EXISTS "ExecutionDecision_userId_tradeDate_idx" ON "ExecutionDecision" ("userId", "tradeDate");',
+    );
+    await this.$executeRawUnsafe(
+      'CREATE INDEX IF NOT EXISTS "ExecutionDecision_tradeDate_idx" ON "ExecutionDecision" ("tradeDate");',
+    );
+    await this.$executeRawUnsafe(
+      'CREATE INDEX IF NOT EXISTS "ExecutionDecision_createdAt_idx" ON "ExecutionDecision" ("createdAt");',
+    );
+
+    await this.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS "Holding" (
         "id" BIGSERIAL PRIMARY KEY,
         "userId" BIGINT NOT NULL,
@@ -216,6 +249,15 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         ) THEN
           CREATE TRIGGER set_holding_updated_at
           BEFORE UPDATE ON "Holding"
+          FOR EACH ROW
+          EXECUTE FUNCTION set_updated_at_timestamp();
+        END IF;
+
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_trigger WHERE tgname = 'set_execution_decision_updated_at'
+        ) THEN
+          CREATE TRIGGER set_execution_decision_updated_at
+          BEFORE UPDATE ON "ExecutionDecision"
           FOR EACH ROW
           EXECUTE FUNCTION set_updated_at_timestamp();
         END IF;

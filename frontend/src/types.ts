@@ -308,6 +308,44 @@ export interface EconomicNewsResponse {
   items: EconomicNewsItem[];
 }
 
+export type ExecutionDecisionSide = 'BUY' | 'SELL';
+export type ExecutionDecisionOutcome = 'PENDING' | 'CORRECT' | 'PARTIAL' | 'WRONG' | 'SKIPPED';
+
+export interface ExecutionDecisionEntry {
+  id: number;
+  tradeDate: string;
+  side: ExecutionDecisionSide;
+  symbol: string;
+  reason: string;
+  plan: string | null;
+  confidence: number;
+  outcome: ExecutionDecisionOutcome;
+  reviewNote: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateExecutionDecisionPayload {
+  side: ExecutionDecisionSide;
+  symbol: string;
+  reason: string;
+  plan?: string;
+  confidence: number;
+  tradeDate?: string;
+}
+
+export interface UpdateExecutionDecisionPayload {
+  side?: ExecutionDecisionSide;
+  symbol?: string;
+  reason?: string;
+  plan?: string;
+  confidence?: number;
+  outcome?: ExecutionDecisionOutcome;
+  reviewNote?: string;
+  tradeDate?: string;
+}
+
 export interface HoldingRow {
   id: number;
   symbol: string;

@@ -1,6 +1,20 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { calculateNepseCost, fetchWatchlist } from '../../lib/api';
-import { NepseCostResponse, WatchlistApiRow } from '../../types';
+import {
+  calculateNepseCost,
+  createExecutionDecision,
+  fetchExecutionDecisions,
+  fetchWatchlist,
+  removeExecutionDecision,
+  updateExecutionDecision,
+} from '../../lib/api';
+import {
+  ExecutionDecisionEntry,
+  ExecutionDecisionOutcome,
+  ExecutionDecisionSide,
+  NepseCostResponse,
+  WatchlistApiRow,
+} from '../../types';
+import { getAuthToken } from '../../lib/auth';
 
 type Side = 'buy' | 'sell';
 
@@ -47,29 +61,12 @@ interface RiskPlanSummary {
   warning: string | null;
 }
 
-type DecisionSide = 'BUY' | 'SELL';
-type DecisionOutcome = 'PENDING' | 'CORRECT' | 'PARTIAL' | 'WRONG' | 'SKIPPED';
-
 interface DecisionDraft {
-  side: DecisionSide;
+  side: ExecutionDecisionSide;
   symbol: string;
   reason: string;
   plan: string;
   confidence: string;
-}
-
-interface DecisionEntry {
-  id: string;
-  createdAt: string;
-  tradeDate: string;
-  side: DecisionSide;
-  symbol: string;
-  reason: string;
-  plan: string;
-  confidence: number;
-  outcome: DecisionOutcome;
-  reviewNote: string;
-  reviewedAt: string | null;
 }
 
 type ChecklistKey =
@@ -103,7 +100,6 @@ const INITIAL_CHECKLIST: Record<ChecklistKey, boolean> = {
   newsChecked: false,
 };
 
-const DECISION_STORAGE_KEY = 'tracker.execution.decision-journal.v1';
 const MAX_DECISION_ENTRIES = 120;
 
 const INITIAL_DECISION_DRAFT: DecisionDraft = {
@@ -153,6 +149,7 @@ function explainCharge(charge: string): string {
 }
 
 export function CalculatorTerminalPage() {
+  const hasAuth = Boolean(getAuthToken());
   const [form, setForm] = useState<FormState>(INITIAL_FORM);
   const [watchlist, setWatchlist] = useState<WatchlistApiRow[]>([]);
   const [result, setResult] = useState<NepseCostResponse | null>(null);
@@ -160,8 +157,9 @@ export function CalculatorTerminalPage() {
   const [riskPlan, setRiskPlan] = useState<RiskPlanState>(INITIAL_RISK_PLAN);
   const [checklist, setChecklist] = useState<Record<ChecklistKey, boolean>>(INITIAL_CHECKLIST);
   const [decisionDraft, setDecisionDraft] = useState<DecisionDraft>(INITIAL_DECISION_DRAFT);
-  const [decisionEntries, setDecisionEntries] = useState<DecisionEntry[]>([]);
+  const [decisionEntries, setDecisionEntries] = useState<ExecutionDecisionEntry[]>([]);
   const [decisionError, setDecisionError] = useState('');
+  const [decisionLoading, setDecisionLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -179,34 +177,25 @@ export function CalculatorTerminalPage() {
   }, [form.side]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    try {
-      const raw = window.localStorage.getItem(DECISION_STORAGE_KEY);
-      if (!raw) return;
-
-      const parsed = JSON.parse(raw) as DecisionEntry[];
-      if (!Array.isArray(parsed)) return;
-
-      const normalized = parsed
-        .filter((entry) => entry && typeof entry.id === 'string')
-        .map((entry) => ({
-          ...entry,
-          outcome: entry.outcome ?? 'PENDING',
-          reviewNote: entry.reviewNote ?? '',
-          reviewedAt: entry.reviewedAt ?? null,
-        }));
-
-      setDecisionEntries(normalized.slice(0, MAX_DECISION_ENTRIES));
-    } catch {
+    if (!hasAuth) {
       setDecisionEntries([]);
+      return;
     }
-  }, []);
 
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    window.localStorage.setItem(DECISION_STORAGE_KEY, JSON.stringify(decisionEntries));
-  }, [decisionEntries]);
+    setDecisionLoading(true);
+    fetchExecutionDecisions({ limit: MAX_DECISION_ENTRIES })
+      .then((rows) => {
+        setDecisionEntries(rows);
+        setDecisionError('');
+      })
+      .catch((requestError) => {
+        setDecisionEntries([]);
+        setDecisionError(requestError instanceof Error ? requestError.message : 'Failed to load decision diary.');
+      })
+      .finally(() => {
+        setDecisionLoading(false);
+      });
+  }, [hasAuth]);
 
   const applySymbol = (symbolInput: string) => {
     const lookup = symbolInput.trim().toLowerCase();
@@ -354,6 +343,11 @@ export function CalculatorTerminalPage() {
   };
 
   const addDecisionEntry = () => {
+    if (!hasAuth) {
+      setDecisionError('Please login to save and sync decision diary across devices.');
+      return;
+    }
+
     const symbol = decisionDraft.symbol.trim().toUpperCase();
     const reason = decisionDraft.reason.trim();
     const plan = decisionDraft.plan.trim();
@@ -374,51 +368,76 @@ export function CalculatorTerminalPage() {
       return;
     }
 
-    const now = new Date();
-    const entry: DecisionEntry = {
-      id: `${now.getTime()}-${Math.random().toString(36).slice(2, 8)}`,
-      createdAt: now.toISOString(),
-      tradeDate: now.toISOString().slice(0, 10),
+    setDecisionLoading(true);
+    createExecutionDecision({
       side: decisionDraft.side,
       symbol,
       reason,
       plan,
       confidence,
-      outcome: 'PENDING',
-      reviewNote: '',
-      reviewedAt: null,
-    };
-
-    setDecisionEntries((previous) => [entry, ...previous].slice(0, MAX_DECISION_ENTRIES));
-    setDecisionDraft((previous) => ({
-      ...previous,
-      reason: '',
-      plan: '',
-    }));
-    setDecisionError('');
+    })
+      .then((entry) => {
+        setDecisionEntries((previous) => [entry, ...previous].slice(0, MAX_DECISION_ENTRIES));
+        setDecisionDraft((previous) => ({
+          ...previous,
+          reason: '',
+          plan: '',
+        }));
+        setDecisionError('');
+      })
+      .catch((requestError) => {
+        setDecisionError(requestError instanceof Error ? requestError.message : 'Failed to save decision note.');
+      })
+      .finally(() => {
+        setDecisionLoading(false);
+      });
   };
 
-  const updateDecisionEntry = (id: string, updates: Partial<DecisionEntry>) => {
+  const patchDecisionEntry = (id: number, updates: {
+    outcome?: ExecutionDecisionOutcome;
+    reviewNote?: string;
+  }) => {
+    if (!hasAuth) return;
+
     setDecisionEntries((previous) =>
       previous.map((entry) => (entry.id === id ? { ...entry, ...updates } : entry)),
     );
+
+    updateExecutionDecision(id, updates)
+      .then((updated) => {
+        setDecisionEntries((previous) =>
+          previous.map((entry) => (entry.id === id ? updated : entry)),
+        );
+      })
+      .catch((requestError) => {
+        setDecisionError(requestError instanceof Error ? requestError.message : 'Failed to update decision note.');
+      });
   };
 
-  const markDecisionReviewed = (id: string) => {
-    setDecisionEntries((previous) =>
-      previous.map((entry) => {
-        if (entry.id !== id) return entry;
-        if (entry.outcome === 'PENDING') {
-          return { ...entry, reviewedAt: null };
-        }
+  const markDecisionReviewed = (id: number, outcome: ExecutionDecisionOutcome) => {
+    if (!hasAuth) return;
 
-        return { ...entry, reviewedAt: new Date().toISOString() };
-      }),
-    );
+    updateExecutionDecision(id, { outcome })
+      .then((updated) => {
+        setDecisionEntries((previous) =>
+          previous.map((entry) => (entry.id === id ? updated : entry)),
+        );
+      })
+      .catch((requestError) => {
+        setDecisionError(requestError instanceof Error ? requestError.message : 'Failed to mark review.');
+      });
   };
 
-  const deleteDecisionEntry = (id: string) => {
-    setDecisionEntries((previous) => previous.filter((entry) => entry.id !== id));
+  const deleteDecisionEntry = (id: number) => {
+    if (!hasAuth) return;
+
+    removeExecutionDecision(id)
+      .then(() => {
+        setDecisionEntries((previous) => previous.filter((entry) => entry.id !== id));
+      })
+      .catch((requestError) => {
+        setDecisionError(requestError instanceof Error ? requestError.message : 'Failed to delete decision note.');
+      });
   };
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -992,8 +1011,11 @@ export function CalculatorTerminalPage() {
             <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Optional Reflection</p>
             <h3 className="mt-1 text-base font-semibold text-white">Execution Decision Diary</h3>
             <p className="mt-1 text-xs text-zinc-500">
-              Optional notes for why you buy/sell today. Review outcome after market close to improve discipline.
+              Optional notes for why you buy/sell today. Notes now sync to your account across devices.
             </p>
+            {!hasAuth ? (
+              <p className="mt-2 text-xs text-terminal-amber">Login required for synced diary storage.</p>
+            ) : null}
           </header>
 
           <div className="grid gap-4 md:grid-cols-2">
@@ -1004,7 +1026,7 @@ export function CalculatorTerminalPage() {
                 onChange={(event) =>
                   setDecisionDraft((old) => ({
                     ...old,
-                    side: event.target.value as DecisionSide,
+                    side: event.target.value as ExecutionDecisionSide,
                   }))
                 }
                 className="terminal-input"
@@ -1059,12 +1081,12 @@ export function CalculatorTerminalPage() {
               </select>
             </div>
 
-            <div className="flex items-end gap-2">
+            <div className="flex flex-wrap items-end gap-2">
               <button type="button" onClick={syncDraftFromCalculator} className="terminal-btn">
                 Sync From Calculator
               </button>
-              <button type="button" onClick={addDecisionEntry} className="terminal-btn-primary">
-                Save Note
+              <button type="button" onClick={addDecisionEntry} className="terminal-btn-primary" disabled={decisionLoading || !hasAuth}>
+                {decisionLoading ? 'Saving...' : 'Save Note'}
               </button>
             </div>
           </div>
@@ -1078,7 +1100,7 @@ export function CalculatorTerminalPage() {
             <h3 className="mt-1 text-base font-semibold text-white">Decision Evaluation Board</h3>
           </header>
 
-          <div className="grid gap-3 md:grid-cols-4">
+          <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
             <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
               <p className="text-xs uppercase tracking-wide text-zinc-500">Logged Today</p>
               <p className="mt-2 font-mono text-lg text-white">{decisionSummary.totalToday}</p>
@@ -1097,7 +1119,7 @@ export function CalculatorTerminalPage() {
             </div>
           </div>
 
-          <div className="space-y-3">
+          <div className="space-y-3 max-h-[560px] overflow-y-auto pr-1">
             {decisionSummary.latest.length ? (
               decisionSummary.latest.map((entry) => (
                 <div key={entry.id} className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
@@ -1114,8 +1136,8 @@ export function CalculatorTerminalPage() {
                     <select
                       value={entry.outcome}
                       onChange={(event) =>
-                        updateDecisionEntry(entry.id, {
-                          outcome: event.target.value as DecisionOutcome,
+                        patchDecisionEntry(entry.id, {
+                          outcome: event.target.value as ExecutionDecisionOutcome,
                         })
                       }
                       className="terminal-input"
@@ -1127,15 +1149,19 @@ export function CalculatorTerminalPage() {
                       <option value="SKIPPED">Skipped Trade</option>
                     </select>
 
-                    <button type="button" onClick={() => markDecisionReviewed(entry.id)} className="terminal-btn">
+                    <button
+                      type="button"
+                      onClick={() => markDecisionReviewed(entry.id, entry.outcome)}
+                      className="terminal-btn"
+                    >
                       {entry.outcome === 'PENDING' ? 'Keep Pending' : 'Mark Reviewed'}
                     </button>
                   </div>
 
                   <textarea
-                    value={entry.reviewNote}
+                    value={entry.reviewNote ?? ''}
                     onChange={(event) =>
-                      updateDecisionEntry(entry.id, {
+                      patchDecisionEntry(entry.id, {
                         reviewNote: event.target.value,
                       })
                     }

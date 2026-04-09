@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Navigate, NavLink, Route, Routes } from 'react-router-dom';
+import { Navigate, NavLink, Route, Routes, useLocation } from 'react-router-dom';
 import { AuthTerminalPage } from './components/terminal/AuthTerminalPage';
 import { CalculatorTerminalPage } from './components/terminal/CalculatorTerminalPage';
 import { ChartDeskTerminalPage } from './components/terminal/ChartDeskTerminalPage';
@@ -55,17 +55,35 @@ function getUserInitial(user: AuthUser): string {
 }
 
 export default function App() {
+  const location = useLocation();
   const [usePureBlack, setUsePureBlack] = useState(true);
   const [now, setNow] = useState(() => new Date());
   const [marketStatus, setMarketStatus] = useState<MarketStatusResponse>(DEFAULT_MARKET_STATUS);
   const [user, setUser] = useState<AuthUser | null>(() => getStoredUser());
   const [authChecking, setAuthChecking] = useState(true);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     document.documentElement.classList.add('dark');
   }, []);
+
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (!mobileNavOpen) {
+      document.body.style.overflow = '';
+      return;
+    }
+
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [mobileNavOpen]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -175,22 +193,15 @@ export default function App() {
             </div>
           </div>
 
-          <nav className="flex flex-1 items-center gap-2 overflow-x-auto lg:hidden">
-            {allNav.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.end}
-                className={({ isActive }) =>
-                  isActive
-                    ? 'rounded-lg border border-cyan-300/70 bg-cyan-500/15 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-cyan-100'
-                      : 'rounded-lg border border-zinc-700/80 bg-zinc-900/75 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-300 transition hover:border-cyan-500/60 hover:text-cyan-100'
-                }
-              >
-                {item.label}
-              </NavLink>
-            ))}
-          </nav>
+          <div className="flex flex-1 items-center justify-end lg:hidden">
+            <button
+              type="button"
+              onClick={() => setMobileNavOpen((old) => !old)}
+              className="rounded-lg border border-zinc-700/80 bg-zinc-900/75 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-200"
+            >
+              {mobileNavOpen ? 'Close Menu' : 'Menu'}
+            </button>
+          </div>
 
           <div className="ml-auto flex items-center gap-3">
             <span
@@ -251,13 +262,44 @@ export default function App() {
             <button
               type="button"
               onClick={() => setUsePureBlack((value) => !value)}
-              className="rounded-lg border border-zinc-700/90 bg-zinc-950/80 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-200 hover:border-cyan-500/60"
+              className="hidden rounded-lg border border-zinc-700/90 bg-zinc-950/80 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-200 hover:border-cyan-500/60 sm:inline-flex"
             >
               {usePureBlack ? 'Ocean Tone' : 'Pure Contrast'}
             </button>
           </div>
         </div>
       </header>
+
+      {mobileNavOpen ? (
+        <div className="fixed inset-0 top-[73px] z-40 bg-black/70 backdrop-blur-sm lg:hidden">
+          <div className="mx-3 mt-3 rounded-2xl border border-zinc-800 bg-zinc-950/95 p-3 shadow-terminal">
+            <nav className="grid gap-2">
+              {allNav.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.end}
+                  className={({ isActive }) =>
+                    isActive
+                      ? 'rounded-lg border border-cyan-300/70 bg-cyan-500/15 px-3 py-2 text-sm font-semibold text-cyan-100'
+                      : 'rounded-lg border border-zinc-700/80 bg-zinc-900/75 px-3 py-2 text-sm font-semibold text-zinc-300'
+                  }
+                >
+                  {item.label}
+                </NavLink>
+              ))}
+            </nav>
+
+            <button
+              type="button"
+              onClick={() => setUsePureBlack((value) => !value)}
+              className="mt-3 w-full rounded-lg border border-zinc-700/90 bg-zinc-900 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-200"
+            >
+              {usePureBlack ? 'Switch To Ocean Tone' : 'Switch To Pure Contrast'}
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       <aside className="fixed bottom-0 left-0 top-[73px] hidden w-[20%] min-w-[230px] border-r border-cyan-900/25 bg-[linear-gradient(180deg,rgba(6,13,19,0.95),rgba(7,16,24,0.95),rgba(5,10,15,0.95))] p-4 lg:block">
         <div className="space-y-2">
@@ -307,7 +349,7 @@ export default function App() {
         </div>
       </aside>
 
-      <main className="px-4 pb-8 pt-24 lg:ml-[20%] lg:px-8">
+      <main className="px-3 pb-8 pt-24 sm:px-4 lg:ml-[20%] lg:px-8">
         <div className="mx-auto max-w-[1500px]">
           {authChecking ? (
             <div className="terminal-card p-6 text-center text-zinc-400">Loading your workspace...</div>
