@@ -17,6 +17,7 @@ const COMPANY_PROFILE_URL_PREFIX = 'https://www.sharesansar.com/company/';
 const SYMBOL_PROFILE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const DETAIL_SECTOR_BACKFILL_LIMIT_PER_CYCLE = 8;
 const DETAIL_SECTOR_BACKFILL_CONCURRENCY = 2;
+const MARKET_STATUS_CACHE_TTL_MS = 45 * 1000;
 
 const SCRAPE_HTTP_HEADERS = {
   'User-Agent':
@@ -71,6 +72,11 @@ interface ParsedMarketStatus {
   asOf: string | null;
 }
 
+interface CachedMarketStatus {
+  fetchedAt: number;
+  status: MarketStatusDto;
+}
+
 interface IndexSnapshotRow {
   indexName: string;
   value: any;
@@ -87,6 +93,7 @@ export class NepseScrapeService {
     bySymbol: Map<string, SymbolProfile>;
   } | null = null;
   private readonly symbolSectorCache = new Map<string, { sector: string | null; fetchedAt: number }>();
+  private marketStatusCache: CachedMarketStatus | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -105,6 +112,12 @@ export class NepseScrapeService {
   }
 
   async scrapeMarketStatus(): Promise<MarketStatusDto> {
+    const now = Date.now();
+
+    if (this.marketStatusCache && now - this.marketStatusCache.fetchedAt < MARKET_STATUS_CACHE_TTL_MS) {
+      return this.marketStatusCache.status;
+    }
+
     const sources: Array<{
       source: MarketStatusDto['source'];
       url: string;
@@ -132,16 +145,28 @@ export class NepseScrapeService {
           continue;
         }
 
-        return {
+        const status: MarketStatusDto = {
           isOpen: parsed.isOpen,
           label: parsed.isOpen ? 'OPEN' : 'CLOSED',
           session: parsed.session,
           source: source.source,
           asOf: parsed.asOf,
         };
+
+        this.marketStatusCache = {
+          fetchedAt: now,
+          status,
+        };
+
+        return status;
       } catch {
         this.logger.warn(`Market status source failed: ${source.url}`);
       }
+    }
+
+    if (this.marketStatusCache) {
+      this.logger.warn('Market status unavailable from all sources. Reusing last known status.');
+      return this.marketStatusCache.status;
     }
 
     return {
@@ -302,14 +327,17 @@ export class NepseScrapeService {
     const bodyText = $('body').text().replace(/\s+/g, ' ').trim();
     if (!bodyText) return null;
 
-    const section = this.extractTextWindow(bodyText, 'NEPSE Index', 640) ?? bodyText;
-    const session = this.extractSessionFromText(section);
+    const section = this.extractTextWindow(bodyText, 'NEPSE Index', 3000) ?? bodyText;
+    const session = this.extractSessionFromText(section) ?? this.extractSessionFromText(bodyText);
     if (!session) return null;
 
-    const asOf = this.extractAsOf(section, [
+    const asOfPatterns = [
       /As of\s*:?\s*([A-Za-z]{3}\s+\d{1,2},\s*\d{4},\s*\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM))/i,
+      /As of\s*:?\s*([A-Za-z]{3}\s+\d{1,2},\s*\d{4},?\s*\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM))/i,
       /([A-Za-z]{3}\s+\d{1,2}\s*\|\s*\d{1,2}:\d{2}\s*(?:AM|PM))/i,
-    ]);
+    ];
+
+    const asOf = this.extractAsOf(section, asOfPatterns) ?? this.extractAsOf(bodyText, asOfPatterns);
 
     return {
       isOpen: session === 'OPEN',
@@ -323,31 +351,38 @@ export class NepseScrapeService {
     const bodyText = $('body').text().replace(/\s+/g, ' ').trim();
     if (!bodyText) return null;
 
-    const section = this.extractTextWindow(bodyText, 'Live Trading', 900) ?? bodyText;
-    const normalized = section.toUpperCase();
-
-    let session: string | null = null;
-    if (/\bMARKET\s+CLOSED\b/.test(normalized)) {
-      session = 'CLOSED';
-    } else if (/\bMARKET\s+OPEN\b/.test(normalized)) {
-      session = 'OPEN';
-    }
-
-    if (!session) return null;
-
-    const asOf = this.extractAsOf(section, [
+    const section = this.extractTextWindow(bodyText, 'Live Trading', 12000) ?? bodyText;
+    const asOfPatterns = [
       /As of\s*:?\s*([0-9]{4}-[0-9]{2}-[0-9]{2}(?:\s+[0-9]{2}:[0-9]{2}:[0-9]{2})?)/i,
-    ]);
+      /As of\s*:?\s*([A-Za-z]{3}\s+\d{1,2},\s*\d{4},?\s*\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM))/i,
+      /([A-Za-z]{3}\s+\d{1,2}\s*\|\s*\d{1,2}:\d{2}\s*(?:AM|PM))/i,
+    ];
+
+    const session = this.extractSessionFromText(section) ?? this.extractSessionFromText(bodyText);
+    const asOf = this.extractAsOf(section, asOfPatterns) ?? this.extractAsOf(bodyText, asOfPatterns);
+
+    if (!session && !asOf) return null;
+
+    const resolvedSession = session ?? 'CLOSED';
 
     return {
-      isOpen: session === 'OPEN',
-      session,
+      isOpen: resolvedSession === 'OPEN',
+      session: resolvedSession,
       asOf,
     };
   }
 
   private extractSessionFromText(text: string): string | null {
     const normalized = text.toUpperCase().replace(/\s+/g, ' ');
+    const compact = normalized.replace(/[^A-Z0-9]/g, '');
+
+    if (compact.includes('HOLIDAY')) return 'HOLIDAY';
+    if (compact.includes('PREOPENCLOSED')) return 'PRE-OPEN CLOSED';
+    if (compact.includes('PREOPEN')) return 'PRE-OPEN';
+    if (compact.includes('MARKETCLOSED')) return 'CLOSED';
+    if (compact.includes('MARKETOPEN')) return 'OPEN';
+    if (compact.includes('TRADINGCLOSED')) return 'CLOSED';
+    if (compact.includes('TRADINGOPEN')) return 'OPEN';
 
     const hasHoliday = /\bHOLIDAY\b/.test(normalized);
     const hasClosed = /\bCLOSED\b/.test(normalized);
