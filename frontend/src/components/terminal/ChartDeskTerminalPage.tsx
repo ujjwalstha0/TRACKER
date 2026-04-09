@@ -388,6 +388,50 @@ export function ChartDeskTerminalPage() {
               {signal.signal} ({signal.confidence}) - {signal.reasons.join(' + ') || 'No strong reasons'}
             </p>
             <p className="text-xs text-zinc-500">Recommended Action: {signal.recommendedAction}</p>
+
+            {signal.plan ? (
+              <div className="mt-3 grid gap-2 rounded-lg border border-zinc-800 bg-zinc-950/70 p-3 md:grid-cols-2 xl:grid-cols-5">
+                <div>
+                  <p className="text-[10px] uppercase tracking-wide text-zinc-500">Entry</p>
+                  <p className="font-mono text-sm text-zinc-100">₹ {formatMoney(signal.plan.entryPrice)}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wide text-zinc-500">Stop-Loss</p>
+                  <p className="font-mono text-sm text-terminal-red">₹ {formatMoney(signal.plan.stopLoss)}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wide text-zinc-500">Target</p>
+                  <p className="font-mono text-sm text-terminal-green">₹ {formatMoney(signal.plan.targetPrice)}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wide text-zinc-500">Risk:Reward</p>
+                  <p className="font-mono text-sm text-zinc-100">{signal.plan.riskReward.toFixed(2)}R</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wide text-zinc-500">Quality</p>
+                  <p className="font-mono text-sm text-cyan-200">{signal.qualityScore.toFixed(1)}%</p>
+                </div>
+                <div className="md:col-span-2 xl:col-span-5">
+                  <p className="text-[10px] uppercase tracking-wide text-zinc-500">Invalidation Rule</p>
+                  <p className="text-xs text-zinc-300">{signal.plan.invalidation}</p>
+                </div>
+              </div>
+            ) : null}
+
+            {signal.requiredChecks.length ? (
+              <div className="mt-2 rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+                <p className="text-[10px] uppercase tracking-wide text-zinc-500">Required Checks Before Execution</p>
+                <ul className="mt-1 space-y-1 text-xs text-zinc-300">
+                  {signal.requiredChecks
+                    .filter((item) => item.required)
+                    .map((item) => (
+                      <li key={item.key}>
+                        {item.passed ? 'PASS' : 'WAIT'} - {item.label}
+                      </li>
+                    ))}
+                </ul>
+              </div>
+            ) : null}
           </>
         ) : (
           <p className="text-sm text-zinc-500">Signal unavailable for the selected symbol.</p>

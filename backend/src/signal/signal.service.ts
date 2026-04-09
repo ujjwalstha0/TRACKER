@@ -1,7 +1,19 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { OhlcService } from '../ohlc/ohlc.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { OhlcCandleDto } from '../ohlc/ohlc.types';
-import { SignalInputData, TradingSignalKind, TradingSignalResult } from './signal.types';
+import {
+  SignalCheckItem,
+  SignalInputData,
+  SignalInterval,
+  SignalNotebookEntryDto,
+  SignalNotebookOutcome,
+  SignalNotebookPayload,
+  SignalNotebookSummaryDto,
+  SignalTradePlan,
+  TradingSignalKind,
+  TradingSignalResult,
+} from './signal.types';
 
 const TRADING_SIGNALS = {
   BUY_HIGH: 5,
@@ -12,8 +24,6 @@ const TRADING_SIGNALS = {
   SELL_LOW: 1,
   HOLD: 0,
 } as const;
-
-type SignalInterval = '1m' | '5m' | '15m' | '1h' | '1d';
 
 const SIGNAL_INTERVAL_CANDIDATES: ReadonlyArray<{
   interval: SignalInterval;
@@ -28,6 +38,39 @@ const SIGNAL_INTERVAL_CANDIDATES: ReadonlyArray<{
 ];
 
 const SIGNAL_CACHE_TTL_MS = 10_000;
+const SIGNAL_QUALITY_GATE = 60;
+const TARGET_RISK_MULTIPLIER = 2.2;
+const MIN_STOP_DISTANCE_PCT = 0.012;
+const NOTEBOOK_DEFAULT_LIMIT = 45;
+const NOTEBOOK_MAX_LIMIT = 140;
+const NEPAL_TIME_ZONE = 'Asia/Kathmandu';
+
+interface SignalNotebookRow {
+  id: bigint;
+  tradeDate: Date;
+  symbol: string;
+  signal: string;
+  confidence: string;
+  entryPrice: unknown;
+  stopLoss: unknown;
+  targetPrice: unknown;
+  riskReward: unknown;
+  qualityScore: unknown;
+  reasons: unknown;
+  requiredChecks: unknown;
+  failedChecks: unknown;
+  recommendedAction: string;
+  generatedAt: Date;
+  evaluatedAt: Date | null;
+  closePrice: unknown;
+  outcome: string;
+  accuracyScore: unknown;
+}
+
+interface SignalOutcome {
+  outcome: SignalNotebookOutcome;
+  accuracyScore: number;
+}
 
 interface SignalCandleSelection {
   interval: SignalInterval;
@@ -38,7 +81,10 @@ interface SignalCandleSelection {
 export class SignalService {
   private readonly signalCache = new Map<string, { fetchedAt: number; result: TradingSignalResult }>();
 
-  constructor(private readonly ohlcService: OhlcService) {}
+  constructor(
+    private readonly ohlcService: OhlcService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   async calculateSignal(symbol: string): Promise<TradingSignalResult> {
     const normalizedSymbol = symbol.trim().toUpperCase();
@@ -56,7 +102,11 @@ export class SignalService {
     const candles = selection.candles;
 
     if (!candles.length) {
-      return this.buildNoDataSignal('No candle history available for this symbol yet.');
+      return this.buildNoDataSignal(
+        'No candle history available for this symbol yet.',
+        selection.interval,
+        new Date(now).toISOString(),
+      );
     }
 
     const closes = candles.map((candle) => candle.c);
@@ -93,6 +143,9 @@ export class SignalService {
     if (!this.hasFiniteSignalInputs(data)) {
       return this.buildNoDataSignal(
         `Insufficient ${selection.interval} indicator history for reliable signal yet.`,
+        selection.interval,
+        new Date(now).toISOString(),
+        data,
       );
     }
 
@@ -113,13 +166,155 @@ export class SignalService {
           })
         : undefined;
 
-    const result = this.calculateTradingSignal(data, prevData);
+    const result = this.calculateTradingSignal(
+      data,
+      prevData,
+      selection.interval,
+      new Date(now).toISOString(),
+    );
     this.signalCache.set(normalizedSymbol, {
       fetchedAt: now,
       result,
     });
 
     return result;
+  }
+
+  async generateDailyNotebook(limit?: number): Promise<SignalNotebookPayload> {
+    const tradeDate = this.getNepalTradeDate();
+    const universeLimit = this.normalizeNotebookLimit(limit);
+
+    const universe = await this.prisma.price.findMany({
+      where: { turnover: { not: null } },
+      orderBy: [{ turnover: 'desc' }, { symbol: 'asc' }],
+      take: universeLimit,
+    });
+
+    for (const row of universe) {
+      const signal = await this.calculateSignal(row.symbol);
+      if (!this.isDirectionalSignal(signal.signal) || !signal.plan) {
+        continue;
+      }
+
+      await this.prisma.signalNotebookEntry.upsert({
+        where: {
+          tradeDate_symbol: {
+            tradeDate,
+            symbol: row.symbol,
+          },
+        },
+        create: {
+          tradeDate,
+          symbol: row.symbol,
+          signal: signal.signal,
+          confidence: signal.confidence,
+          entryPrice: signal.plan.entryPrice,
+          stopLoss: signal.plan.stopLoss,
+          targetPrice: signal.plan.targetPrice,
+          riskReward: signal.plan.riskReward,
+          qualityScore: signal.qualityScore,
+          reasons: signal.reasons,
+          requiredChecks: signal.requiredChecks
+            .filter((item) => item.required)
+            .map((item) => item.label),
+          failedChecks: signal.failedChecks,
+          recommendedAction: signal.recommendedAction,
+          generatedAt: new Date(signal.generatedAt),
+          evaluatedAt: null,
+          closePrice: null,
+          outcome: 'PENDING',
+          accuracyScore: null,
+        },
+        update: {
+          signal: signal.signal,
+          confidence: signal.confidence,
+          entryPrice: signal.plan.entryPrice,
+          stopLoss: signal.plan.stopLoss,
+          targetPrice: signal.plan.targetPrice,
+          riskReward: signal.plan.riskReward,
+          qualityScore: signal.qualityScore,
+          reasons: signal.reasons,
+          requiredChecks: signal.requiredChecks
+            .filter((item) => item.required)
+            .map((item) => item.label),
+          failedChecks: signal.failedChecks,
+          recommendedAction: signal.recommendedAction,
+          generatedAt: new Date(signal.generatedAt),
+          evaluatedAt: null,
+          closePrice: null,
+          outcome: 'PENDING',
+          accuracyScore: null,
+        },
+      });
+    }
+
+    return this.getNotebookByDate(tradeDate);
+  }
+
+  async evaluateTodayNotebookClose(): Promise<SignalNotebookPayload> {
+    const tradeDate = this.getNepalTradeDate();
+    const entries: SignalNotebookRow[] = await this.prisma.signalNotebookEntry.findMany({
+      where: {
+        tradeDate,
+        evaluatedAt: null,
+      },
+      orderBy: { generatedAt: 'desc' },
+    });
+
+    if (!entries.length) {
+      return this.getNotebookByDate(tradeDate);
+    }
+
+    const symbols = entries.map((entry: SignalNotebookRow) => entry.symbol);
+    const priceRows = await this.prisma.price.findMany({
+      where: {
+        symbol: {
+          in: symbols,
+        },
+      },
+    });
+
+    const latestBySymbol = new Map<string, number>();
+    for (const row of priceRows) {
+      latestBySymbol.set(row.symbol, this.toNumber(row.ltp));
+    }
+
+    const evaluatedAt = new Date();
+
+    for (const entry of entries) {
+      if (!this.isDirectionalSignal(entry.signal)) {
+        continue;
+      }
+
+      const closePrice = latestBySymbol.get(entry.symbol);
+      if (closePrice === undefined || !Number.isFinite(closePrice)) {
+        continue;
+      }
+
+      const outcome = this.evaluateOutcome(
+        entry.signal,
+        this.toNumber(entry.entryPrice),
+        this.toNumber(entry.stopLoss),
+        this.toNumber(entry.targetPrice),
+        closePrice,
+      );
+
+      await this.prisma.signalNotebookEntry.update({
+        where: { id: entry.id },
+        data: {
+          evaluatedAt,
+          closePrice,
+          outcome: outcome.outcome,
+          accuracyScore: outcome.accuracyScore,
+        },
+      });
+    }
+
+    return this.getNotebookByDate(tradeDate);
+  }
+
+  async getTodayNotebook(): Promise<SignalNotebookPayload> {
+    return this.getNotebookByDate(this.getNepalTradeDate());
   }
 
   private async loadBestSignalCandles(symbol: string): Promise<SignalCandleSelection> {
@@ -153,7 +348,12 @@ export class SignalService {
     return best;
   }
 
-  private buildNoDataSignal(reason: string): TradingSignalResult {
+  private buildNoDataSignal(
+    reason: string,
+    interval: SignalInterval,
+    generatedAt: string,
+    data?: SignalInputData,
+  ): TradingSignalResult {
     return {
       signal: 'HOLD',
       confidence: 'LOW',
@@ -162,6 +362,23 @@ export class SignalService {
       strength: 0,
       reasons: [reason],
       recommendedAction: 'WAIT',
+      qualityScore: 0,
+      plan: null,
+      requiredChecks: [],
+      failedChecks: [],
+      priceContext: {
+        close: this.toFiniteOrZero(data?.close),
+        ema8: this.toFiniteOrZero(data?.ema8),
+        ema21: this.toFiniteOrZero(data?.ema21),
+        ema20: this.toFiniteOrZero(data?.ema20),
+        ema50: this.toFiniteOrZero(data?.ema50),
+        rsi14: this.toFiniteOrZero(data?.rsi14),
+        vwap: this.toFiniteOrZero(data?.vwap),
+        volume: this.toFiniteOrZero(data?.volume),
+        avgVolume20: this.toFiniteOrZero(data?.avgVolume20),
+      },
+      interval,
+      generatedAt,
     };
   }
 
@@ -171,7 +388,12 @@ export class SignalService {
     );
   }
 
-  private calculateTradingSignal(data: SignalInputData, prevData?: SignalInputData): TradingSignalResult {
+  private calculateTradingSignal(
+    data: SignalInputData,
+    prevData: SignalInputData | undefined,
+    interval: SignalInterval,
+    generatedAt: string,
+  ): TradingSignalResult {
     let buyScore = 0;
     let sellScore = 0;
     const buyReasons: string[] = [];
@@ -252,43 +474,161 @@ export class SignalService {
       sellReasons.push('Volume confirmation');
     }
 
-    const hasBuyConfluence =
-      emaBull &&
-      data.close > data.vwap &&
-      data.rsi14 >= 35 &&
-      data.rsi14 <= 75 &&
-      (data.ema20 >= data.ema50 || buyScore >= TRADING_SIGNALS.BUY_MEDIUM);
+    const buyChecks: SignalCheckItem[] = [
+      {
+        key: 'ema_fast_trend',
+        label: 'EMA8 is above EMA21',
+        required: true,
+        passed: emaBull,
+        weight: 22,
+      },
+      {
+        key: 'ema_swing_trend',
+        label: 'EMA20 is above EMA50',
+        required: true,
+        passed: data.ema20 >= data.ema50,
+        weight: 16,
+      },
+      {
+        key: 'rsi_buy_zone',
+        label: 'RSI is in bullish zone (40-68)',
+        required: true,
+        passed: data.rsi14 >= 40 && data.rsi14 <= 68,
+        weight: 16,
+      },
+      {
+        key: 'price_above_vwap',
+        label: 'Price is above VWAP',
+        required: true,
+        passed: data.close > data.vwap,
+        weight: 18,
+      },
+      {
+        key: 'volume_confirmation',
+        label: 'Volume confirms with 20-period average',
+        required: false,
+        passed: data.avgVolume20 > 0 && data.volume >= data.avgVolume20 * 1.05,
+        weight: 14,
+      },
+      {
+        key: 'not_upper_band_exhausted',
+        label: 'Price is not overextended near upper Bollinger band',
+        required: false,
+        passed: !hasValidBands || data.close < data.bbUpper * 0.995,
+        weight: 14,
+      },
+    ];
 
-    const hasSellConfluence =
-      emaBear &&
-      data.close < data.vwap &&
-      data.rsi14 >= 25 &&
-      data.rsi14 <= 68 &&
-      (data.ema20 <= data.ema50 || sellScore >= TRADING_SIGNALS.SELL_MEDIUM);
+    const sellChecks: SignalCheckItem[] = [
+      {
+        key: 'ema_fast_trend_down',
+        label: 'EMA8 is below EMA21',
+        required: true,
+        passed: emaBear,
+        weight: 22,
+      },
+      {
+        key: 'ema_swing_trend_down',
+        label: 'EMA20 is below EMA50',
+        required: true,
+        passed: data.ema20 <= data.ema50,
+        weight: 16,
+      },
+      {
+        key: 'rsi_sell_zone',
+        label: 'RSI is in bearish zone (32-60)',
+        required: true,
+        passed: data.rsi14 >= 32 && data.rsi14 <= 60,
+        weight: 16,
+      },
+      {
+        key: 'price_below_vwap',
+        label: 'Price is below VWAP',
+        required: true,
+        passed: data.close < data.vwap,
+        weight: 18,
+      },
+      {
+        key: 'volume_confirmation_down',
+        label: 'Volume confirms with 20-period average',
+        required: false,
+        passed: data.avgVolume20 > 0 && data.volume >= data.avgVolume20 * 1.05,
+        weight: 14,
+      },
+      {
+        key: 'not_lower_band_exhausted',
+        label: 'Price is not overextended near lower Bollinger band',
+        required: false,
+        passed: !hasValidBands || data.close > data.bbLower * 1.005,
+        weight: 14,
+      },
+    ];
+
+    const buyQuality = this.calculateQualityScore(buyChecks);
+    const sellQuality = this.calculateQualityScore(sellChecks);
+
+    const hasBuyConfluence = buyChecks
+      .filter((item) => item.required)
+      .every((item) => item.passed);
+
+    const hasSellConfluence = sellChecks
+      .filter((item) => item.required)
+      .every((item) => item.passed);
 
     const isStrongBuy =
-      hasBuyConfluence && buyScore >= 3 && buyScore >= sellScore + 1;
+      hasBuyConfluence &&
+      buyScore >= TRADING_SIGNALS.BUY_MEDIUM &&
+      buyScore >= sellScore + 1 &&
+      buyQuality >= SIGNAL_QUALITY_GATE;
+
     const isStrongSell =
-      hasSellConfluence && sellScore >= 3 && sellScore >= buyScore + 1;
+      hasSellConfluence &&
+      sellScore >= TRADING_SIGNALS.SELL_MEDIUM &&
+      sellScore >= buyScore + 1 &&
+      sellQuality >= SIGNAL_QUALITY_GATE;
 
     const signal: TradingSignalKind = isStrongBuy ? 'BUY' : isStrongSell ? 'SELL' : 'HOLD';
 
     const strength = buyScore > sellScore ? buyScore : sellScore;
+    const selectedChecks =
+      signal === 'BUY'
+        ? buyChecks
+        : signal === 'SELL'
+          ? sellChecks
+          : buyScore >= sellScore
+            ? buyChecks
+            : sellChecks;
+
+    const qualityScore =
+      signal === 'BUY'
+        ? buyQuality
+        : signal === 'SELL'
+          ? sellQuality
+          : Math.max(buyQuality, sellQuality);
+
     const confidence =
       signal === 'HOLD'
         ? 'LOW'
-        : strength >= TRADING_SIGNALS.BUY_HIGH
+        : qualityScore >= 82 || strength >= TRADING_SIGNALS.BUY_HIGH
           ? 'HIGH'
-          : strength >= TRADING_SIGNALS.BUY_MEDIUM
+          : qualityScore >= 68 || strength >= TRADING_SIGNALS.BUY_MEDIUM
             ? 'MEDIUM'
             : 'LOW';
 
-    const reasons =
-      signal === 'BUY'
-        ? buyReasons
-        : signal === 'SELL'
-          ? sellReasons
-          : ['All confirmation conditions are not aligned yet.'];
+    const failedChecks = selectedChecks
+      .filter((item) => item.required && !item.passed)
+      .map((item) => item.label);
+
+    const reasons = this.buildReasons(
+      signal,
+      buyReasons,
+      sellReasons,
+      failedChecks,
+      buyQuality,
+      sellQuality,
+    );
+
+    const plan = signal === 'HOLD' ? null : this.buildTradePlan(signal, data);
 
     return {
       signal,
@@ -296,21 +636,364 @@ export class SignalService {
       buyScore,
       sellScore,
       strength,
-      reasons: reasons.length ? reasons.slice(0, 3) : ['No strong confluence yet.'],
-      recommendedAction: this.getAction(signal, strength),
+      reasons: reasons.length ? reasons.slice(0, 5) : ['No strong confluence yet.'],
+      recommendedAction: this.getAction(signal, strength, qualityScore),
+      qualityScore,
+      plan,
+      requiredChecks: selectedChecks,
+      failedChecks,
+      priceContext: {
+        close: this.round4(data.close),
+        ema8: this.round4(data.ema8),
+        ema21: this.round4(data.ema21),
+        ema20: this.round4(data.ema20),
+        ema50: this.round4(data.ema50),
+        rsi14: this.round4(data.rsi14),
+        vwap: this.round4(data.vwap),
+        volume: this.round4(data.volume),
+        avgVolume20: this.round4(data.avgVolume20),
+      },
+      interval,
+      generatedAt,
     };
   }
 
-  private getAction(signal: TradingSignalKind, strength: number): string {
+  private buildReasons(
+    signal: TradingSignalKind,
+    buyReasons: string[],
+    sellReasons: string[],
+    failedChecks: string[],
+    buyQuality: number,
+    sellQuality: number,
+  ): string[] {
+    if (signal === 'BUY') {
+      return [
+        ...buyReasons,
+        `Quality score ${buyQuality.toFixed(1)}% passed minimum execution gate.`,
+        'Use plan levels and only execute if risk controls are respected.',
+      ];
+    }
+
+    if (signal === 'SELL') {
+      return [
+        ...sellReasons,
+        `Quality score ${sellQuality.toFixed(1)}% passed minimum execution gate.`,
+        'Use plan levels and avoid oversized countertrend entries.',
+      ];
+    }
+
+    if (failedChecks.length) {
+      return [
+        `Signal blocked: ${failedChecks.join('; ')}.`,
+        `Buy quality ${buyQuality.toFixed(1)}% vs Sell quality ${sellQuality.toFixed(1)}%.`,
+        'Wait for full confirmation before taking directional exposure.',
+      ];
+    }
+
+    return [
+      'No directional edge above quality threshold yet.',
+      `Buy quality ${buyQuality.toFixed(1)}% vs Sell quality ${sellQuality.toFixed(1)}%.`,
+      'Stand by for stronger trend, momentum, and VWAP alignment.',
+    ];
+  }
+
+  private getAction(signal: TradingSignalKind, strength: number, qualityScore: number): string {
     if (signal === 'HOLD') return 'WAIT';
 
     const actions = {
-      HIGH: signal === 'BUY' ? 'ENTER LONG' : 'EXIT SHORT',
-      MEDIUM: signal === 'BUY' ? 'ADD POSITION' : 'REDUCE SIZE',
-      LOW: signal === 'BUY' ? 'WATCH CLOSELY' : 'TIGHTEN STOPS',
+      HIGH: signal === 'BUY' ? 'ENTER LONG WITH FULL PLAN' : 'ENTER SHORT WITH FULL PLAN',
+      MEDIUM: signal === 'BUY' ? 'ENTER LONG WITH REDUCED SIZE' : 'ENTER SHORT WITH REDUCED SIZE',
+      LOW: signal === 'BUY' ? 'WATCH FOR BETTER BUY SETUP' : 'WATCH FOR BETTER SELL SETUP',
     };
 
-    return actions[strength >= 5 ? 'HIGH' : strength >= 3 ? 'MEDIUM' : 'LOW'] || 'MONITOR';
+    if (qualityScore >= 80 || strength >= 5) {
+      return actions.HIGH;
+    }
+
+    if (qualityScore >= 65 || strength >= 3) {
+      return actions.MEDIUM;
+    }
+
+    return actions.LOW;
+  }
+
+  private calculateQualityScore(checks: SignalCheckItem[]): number {
+    const totalWeight = checks.reduce((sum, item) => sum + item.weight, 0);
+    if (totalWeight <= 0) return 0;
+
+    const passedWeight = checks
+      .filter((item) => item.passed)
+      .reduce((sum, item) => sum + item.weight, 0);
+
+    return this.round2((passedWeight / totalWeight) * 100);
+  }
+
+  private buildTradePlan(signal: Exclude<TradingSignalKind, 'HOLD'>, data: SignalInputData): SignalTradePlan {
+    const hasValidBands =
+      Number.isFinite(data.bbLower) && Number.isFinite(data.bbUpper) && data.bbUpper > data.bbLower;
+
+    const halfBandRange = hasValidBands
+      ? Math.max((data.bbUpper - data.bbLower) / 2, data.close * 0.01)
+      : data.close * 0.025;
+
+    const minimumRisk = data.close * MIN_STOP_DISTANCE_PCT;
+
+    if (signal === 'BUY') {
+      const structuralStop = Math.min(
+        data.ema21,
+        data.ema20,
+        data.vwap,
+        data.close - halfBandRange * 0.75,
+      );
+
+      const riskPerShare = Math.max(minimumRisk, data.close - structuralStop);
+      const stopLoss = data.close - riskPerShare;
+      const rewardPerShare = riskPerShare * TARGET_RISK_MULTIPLIER;
+      const targetPrice = data.close + rewardPerShare;
+
+      return {
+        entryPrice: this.round4(data.close),
+        stopLoss: this.round4(stopLoss),
+        targetPrice: this.round4(targetPrice),
+        riskPerShare: this.round4(riskPerShare),
+        rewardPerShare: this.round4(rewardPerShare),
+        riskReward: this.round2(rewardPerShare / riskPerShare),
+        expectedMovePct: this.round2((rewardPerShare / data.close) * 100),
+        invalidation: 'Invalidate BUY if price closes below stop-loss or momentum breaks under EMA21/VWAP.',
+      };
+    }
+
+    const structuralStop = Math.max(
+      data.ema21,
+      data.ema20,
+      data.vwap,
+      data.close + halfBandRange * 0.75,
+    );
+    const riskPerShare = Math.max(minimumRisk, structuralStop - data.close);
+    const stopLoss = data.close + riskPerShare;
+    const rewardPerShare = riskPerShare * TARGET_RISK_MULTIPLIER;
+    const targetPrice = Math.max(0.01, data.close - rewardPerShare);
+
+    return {
+      entryPrice: this.round4(data.close),
+      stopLoss: this.round4(stopLoss),
+      targetPrice: this.round4(targetPrice),
+      riskPerShare: this.round4(riskPerShare),
+      rewardPerShare: this.round4(rewardPerShare),
+      riskReward: this.round2(rewardPerShare / riskPerShare),
+      expectedMovePct: this.round2((rewardPerShare / data.close) * 100),
+      invalidation: 'Invalidate SELL if price closes above stop-loss or regains EMA21/VWAP control.',
+    };
+  }
+
+  private evaluateOutcome(
+    signal: Exclude<TradingSignalKind, 'HOLD'>,
+    entryPrice: number,
+    stopLoss: number,
+    targetPrice: number,
+    closePrice: number,
+  ): SignalOutcome {
+    if (signal === 'BUY') {
+      if (closePrice >= targetPrice) {
+        return { outcome: 'HIT_TARGET', accuracyScore: 100 };
+      }
+
+      if (closePrice <= stopLoss) {
+        return { outcome: 'HIT_STOP', accuracyScore: 0 };
+      }
+
+      if (closePrice > entryPrice) {
+        return { outcome: 'MOVED_IN_FAVOR', accuracyScore: 70 };
+      }
+
+      if (closePrice < entryPrice) {
+        return { outcome: 'MOVED_AGAINST', accuracyScore: 30 };
+      }
+
+      return { outcome: 'FLAT', accuracyScore: 50 };
+    }
+
+    if (closePrice <= targetPrice) {
+      return { outcome: 'HIT_TARGET', accuracyScore: 100 };
+    }
+
+    if (closePrice >= stopLoss) {
+      return { outcome: 'HIT_STOP', accuracyScore: 0 };
+    }
+
+    if (closePrice < entryPrice) {
+      return { outcome: 'MOVED_IN_FAVOR', accuracyScore: 70 };
+    }
+
+    if (closePrice > entryPrice) {
+      return { outcome: 'MOVED_AGAINST', accuracyScore: 30 };
+    }
+
+    return { outcome: 'FLAT', accuracyScore: 50 };
+  }
+
+  private async getNotebookByDate(tradeDate: Date): Promise<SignalNotebookPayload> {
+    const rows: SignalNotebookRow[] = await this.prisma.signalNotebookEntry.findMany({
+      where: { tradeDate },
+      orderBy: [{ qualityScore: 'desc' }, { generatedAt: 'desc' }],
+    });
+
+    const entries: SignalNotebookEntryDto[] = rows
+      .filter((row: SignalNotebookRow) => this.isDirectionalSignal(row.signal))
+      .map((row: SignalNotebookRow) => ({
+        id: Number(row.id),
+        tradeDate: this.toIsoDate(row.tradeDate),
+        symbol: row.symbol,
+        signal: row.signal as Exclude<TradingSignalKind, 'HOLD'>,
+        confidence: this.normalizeConfidence(row.confidence),
+        entryPrice: this.toNumber(row.entryPrice),
+        stopLoss: this.toNumber(row.stopLoss),
+        targetPrice: this.toNumber(row.targetPrice),
+        riskReward: this.toNumber(row.riskReward),
+        qualityScore: this.toNumber(row.qualityScore),
+        reasons: this.toStringArray(row.reasons),
+        requiredChecks: this.toStringArray(row.requiredChecks),
+        failedChecks: this.toStringArray(row.failedChecks),
+        recommendedAction: row.recommendedAction,
+        generatedAt: row.generatedAt.toISOString(),
+        evaluatedAt: row.evaluatedAt ? row.evaluatedAt.toISOString() : null,
+        closePrice: row.closePrice === null ? null : this.toNumber(row.closePrice),
+        outcome: this.normalizeOutcome(row.outcome),
+        accuracyScore: row.accuracyScore === null ? null : this.toNumber(row.accuracyScore),
+      }));
+
+    const summary = this.buildNotebookSummary(entries);
+    const generatedAt = rows.length
+      ? new Date(Math.max(...rows.map((row: SignalNotebookRow) => row.generatedAt.getTime()))).toISOString()
+      : null;
+
+    const evaluatedRows = rows.filter((row: SignalNotebookRow) => row.evaluatedAt !== null);
+    const evaluatedAt = evaluatedRows.length
+      ? new Date(
+          Math.max(
+            ...evaluatedRows.map((row: SignalNotebookRow) =>
+              row.evaluatedAt ? row.evaluatedAt.getTime() : 0,
+            ),
+          ),
+        ).toISOString()
+      : null;
+
+    return {
+      tradeDate: this.toIsoDate(tradeDate),
+      generatedAt,
+      evaluatedAt,
+      summary,
+      entries,
+    };
+  }
+
+  private buildNotebookSummary(entries: SignalNotebookEntryDto[]): SignalNotebookSummaryDto {
+    const evaluated = entries.filter((entry) => entry.outcome !== 'PENDING');
+    const hitTargetCount = entries.filter((entry) => entry.outcome === 'HIT_TARGET').length;
+    const hitStopCount = entries.filter((entry) => entry.outcome === 'HIT_STOP').length;
+    const movedInFavorCount = entries.filter((entry) => entry.outcome === 'MOVED_IN_FAVOR').length;
+    const movedAgainstCount = entries.filter((entry) => entry.outcome === 'MOVED_AGAINST').length;
+
+    const accuracyValues = evaluated
+      .map((entry) => entry.accuracyScore)
+      .filter((score): score is number => score !== null);
+
+    const winLikeCount = hitTargetCount + movedInFavorCount;
+    const winRatePct = evaluated.length > 0 ? (winLikeCount / evaluated.length) * 100 : 0;
+    const averageAccuracyPct =
+      accuracyValues.length > 0
+        ? accuracyValues.reduce((sum, value) => sum + value, 0) / accuracyValues.length
+        : 0;
+
+    return {
+      total: entries.length,
+      buyCount: entries.filter((entry) => entry.signal === 'BUY').length,
+      sellCount: entries.filter((entry) => entry.signal === 'SELL').length,
+      pendingCount: entries.filter((entry) => entry.outcome === 'PENDING').length,
+      evaluatedCount: evaluated.length,
+      hitTargetCount,
+      hitStopCount,
+      movedInFavorCount,
+      movedAgainstCount,
+      winRatePct: this.round2(winRatePct),
+      averageAccuracyPct: this.round2(averageAccuracyPct),
+    };
+  }
+
+  private isDirectionalSignal(value: string): value is Exclude<TradingSignalKind, 'HOLD'> {
+    return value === 'BUY' || value === 'SELL';
+  }
+
+  private normalizeConfidence(value: string): 'HIGH' | 'MEDIUM' | 'LOW' {
+    if (value === 'HIGH' || value === 'MEDIUM' || value === 'LOW') {
+      return value;
+    }
+
+    return 'LOW';
+  }
+
+  private normalizeOutcome(value: string): SignalNotebookOutcome {
+    if (
+      value === 'PENDING' ||
+      value === 'HIT_TARGET' ||
+      value === 'HIT_STOP' ||
+      value === 'MOVED_IN_FAVOR' ||
+      value === 'MOVED_AGAINST' ||
+      value === 'FLAT'
+    ) {
+      return value;
+    }
+
+    return 'PENDING';
+  }
+
+  private normalizeNotebookLimit(limit?: number): number {
+    const parsed = Number(limit ?? NOTEBOOK_DEFAULT_LIMIT);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return NOTEBOOK_DEFAULT_LIMIT;
+    }
+
+    return Math.min(Math.floor(parsed), NOTEBOOK_MAX_LIMIT);
+  }
+
+  private getNepalTradeDate(now = new Date()): Date {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: NEPAL_TIME_ZONE,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(now);
+
+    const year = Number(parts.find((part) => part.type === 'year')?.value ?? now.getUTCFullYear());
+    const month = Number(parts.find((part) => part.type === 'month')?.value ?? now.getUTCMonth() + 1);
+    const day = Number(parts.find((part) => part.type === 'day')?.value ?? now.getUTCDate());
+
+    return new Date(Date.UTC(year, month - 1, day));
+  }
+
+  private toIsoDate(date: Date): string {
+    return date.toISOString().slice(0, 10);
+  }
+
+  private toStringArray(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    return value.map((item) => String(item));
+  }
+
+  private toNumber(value: unknown): number {
+    return Number(String(value));
+  }
+
+  private toFiniteOrZero(value: number | undefined): number {
+    return Number.isFinite(value) ? Number(value) : 0;
+  }
+
+  private round2(value: number): number {
+    return Number(value.toFixed(2));
+  }
+
+  private round4(value: number): number {
+    return Number(value.toFixed(4));
   }
 
   private buildSignalInput(row: {

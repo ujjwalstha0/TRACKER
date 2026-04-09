@@ -95,3 +95,29 @@ model IndexValue {
 
   @@index([savedAt])
 }
+
+model SignalNotebookEntry {
+  id                BigInt   @id @default(autoincrement())
+  tradeDate         DateTime @db.Date
+  symbol            String   @db.VarChar(20)
+  signal            String   @db.VarChar(10)
+  confidence        String   @db.VarChar(10)
+  entryPrice        Decimal  @db.Decimal(18, 4)
+  stopLoss          Decimal  @db.Decimal(18, 4)
+  targetPrice       Decimal  @db.Decimal(18, 4)
+  riskReward        Decimal  @db.Decimal(10, 4)
+  qualityScore      Decimal  @db.Decimal(6, 2)
+  reasons           Json
+  requiredChecks    Json
+  failedChecks      Json
+  recommendedAction String   @db.VarChar(80)
+  generatedAt       DateTime @default(now())
+  evaluatedAt       DateTime?
+  closePrice        Decimal? @db.Decimal(18, 4)
+  outcome           String   @default("PENDING") @db.VarChar(30)
+  accuracyScore     Decimal? @db.Decimal(6, 2)
+
+  @@unique([tradeDate, symbol])
+  @@index([tradeDate])
+  @@index([tradeDate, evaluatedAt])
+}

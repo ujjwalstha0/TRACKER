@@ -99,6 +99,39 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     );
 
     await this.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "SignalNotebookEntry" (
+        "id" BIGSERIAL PRIMARY KEY,
+        "tradeDate" DATE NOT NULL,
+        "symbol" VARCHAR(20) NOT NULL,
+        "signal" VARCHAR(10) NOT NULL,
+        "confidence" VARCHAR(10) NOT NULL,
+        "entryPrice" NUMERIC(18,4) NOT NULL,
+        "stopLoss" NUMERIC(18,4) NOT NULL,
+        "targetPrice" NUMERIC(18,4) NOT NULL,
+        "riskReward" NUMERIC(10,4) NOT NULL,
+        "qualityScore" NUMERIC(6,2) NOT NULL,
+        "reasons" JSONB NOT NULL DEFAULT '[]'::jsonb,
+        "requiredChecks" JSONB NOT NULL DEFAULT '[]'::jsonb,
+        "failedChecks" JSONB NOT NULL DEFAULT '[]'::jsonb,
+        "recommendedAction" VARCHAR(80) NOT NULL,
+        "generatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "evaluatedAt" TIMESTAMP(3),
+        "closePrice" NUMERIC(18,4),
+        "outcome" VARCHAR(30) NOT NULL DEFAULT 'PENDING',
+        "accuracyScore" NUMERIC(6,2)
+      );
+    `);
+    await this.$executeRawUnsafe(
+      'CREATE UNIQUE INDEX IF NOT EXISTS "SignalNotebookEntry_tradeDate_symbol_key" ON "SignalNotebookEntry" ("tradeDate", "symbol");',
+    );
+    await this.$executeRawUnsafe(
+      'CREATE INDEX IF NOT EXISTS "SignalNotebookEntry_tradeDate_idx" ON "SignalNotebookEntry" ("tradeDate");',
+    );
+    await this.$executeRawUnsafe(
+      'CREATE INDEX IF NOT EXISTS "SignalNotebookEntry_tradeDate_evaluatedAt_idx" ON "SignalNotebookEntry" ("tradeDate", "evaluatedAt");',
+    );
+
+    await this.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS "User" (
         "id" BIGSERIAL PRIMARY KEY,
         "email" VARCHAR(255) NOT NULL,

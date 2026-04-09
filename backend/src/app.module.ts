@@ -6,6 +6,7 @@ import scrapeConfig from './config/scrape.config';
 import { FeesModule } from './fees/fees.module';
 import { IndicatorsModule } from './indicators/indicators.module';
 import { IndicesModule } from './indices/indices.module';
+import { NewsModule } from './news/news.module';
 import { OhlcModule } from './ohlc/ohlc.module';
 import { PortfolioModule } from './portfolio/portfolio.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -41,6 +42,7 @@ import { WatchlistModule } from './watchlist/watchlist.module';
     TradesModule,
     WatchlistModule,
     IndicesModule,
+    NewsModule,
     OhlcModule,
     IndicatorsModule,
     SignalModule,

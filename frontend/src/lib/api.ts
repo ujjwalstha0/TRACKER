@@ -3,6 +3,7 @@ import {
   AuthUser,
   ChangePasswordPayload,
   CreateHoldingPayload,
+  EconomicNewsResponse,
   FeeCalculationInput,
   FeeCalculationResult,
   IndexApiRow,
@@ -13,6 +14,7 @@ import {
   OtpDispatchResponse,
   OhlcCandle,
   PortfolioResponse,
+  SignalNotebookResponse,
   TradingSignalResponse,
   TradeRow,
   WatchlistApiRow,
@@ -221,6 +223,61 @@ export async function fetchSignal(symbol: string): Promise<TradingSignalResponse
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { message?: string | string[] };
     throw new Error(parseErrorMessage(body, 'Failed to load trading signal'));
+  }
+
+  return res.json();
+}
+
+export async function generateSignalNotebook(limit = 45): Promise<SignalNotebookResponse> {
+  const res = await fetch(`${API_BASE}/signal/notebook/generate`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ limit }),
+  });
+
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string | string[] };
+    throw new Error(parseErrorMessage(body, 'Failed to generate daily signal notebook'));
+  }
+
+  return res.json();
+}
+
+export async function fetchSignalNotebookToday(): Promise<SignalNotebookResponse> {
+  const res = await fetch(`${API_BASE}/signal/notebook/today`, { cache: 'no-store' });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string | string[] };
+    throw new Error(parseErrorMessage(body, 'Failed to load today signal notebook'));
+  }
+
+  return res.json();
+}
+
+export async function evaluateSignalNotebookClose(): Promise<SignalNotebookResponse> {
+  const res = await fetch(`${API_BASE}/signal/notebook/evaluate-close`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string | string[] };
+    throw new Error(parseErrorMessage(body, 'Failed to evaluate daily signal notebook'));
+  }
+
+  return res.json();
+}
+
+export async function fetchEconomicNews(limit = 30): Promise<EconomicNewsResponse> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  const res = await fetch(`${API_BASE}/news/economy-market?${params.toString()}`, { cache: 'no-store' });
+
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string | string[] };
+    throw new Error(parseErrorMessage(body, 'Failed to load economy-market news'));
   }
 
   return res.json();

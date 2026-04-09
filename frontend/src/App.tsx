@@ -5,6 +5,7 @@ import { CalculatorTerminalPage } from './components/terminal/CalculatorTerminal
 import { ChartDeskTerminalPage } from './components/terminal/ChartDeskTerminalPage';
 import { EdgeSuiteTerminalPage } from './components/terminal/EdgeSuiteTerminalPage';
 import { LiveMarketTerminalPage } from './components/terminal/LiveMarketTerminalPage';
+import { MarketNewsTerminalPage } from './components/terminal/MarketNewsTerminalPage';
 import { PortfolioTerminalPage } from './components/terminal/PortfolioTerminalPage';
 import { TradeJournalTerminalPage } from './components/terminal/TradeJournalTerminalPage';
 import { fetchMarketStatus, fetchMe } from './lib/api';
@@ -20,6 +21,7 @@ interface NavItem {
 const PUBLIC_NAV = [
   { to: '/', label: 'Execution', end: true },
   { to: '/live-market', label: 'Market' },
+  { to: '/market-news', label: 'Economy News' },
   { to: '/edge-suite', label: 'Trade + Signal Suite' },
 ] as NavItem[];
 
@@ -313,6 +315,7 @@ export default function App() {
             <Routes>
               <Route path="/" element={<CalculatorTerminalPage />} />
               <Route path="/live-market" element={<LiveMarketTerminalPage />} />
+              <Route path="/market-news" element={<MarketNewsTerminalPage />} />
               <Route path="/edge-suite" element={<EdgeSuiteTerminalPage user={user} />} />
               <Route path="/signal-dashboard" element={<Navigate to="/edge-suite" replace />} />
               <Route
@@ -394,7 +397,7 @@ export default function App() {
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Platform Modules</p>
-                <p className="mt-2 text-sm text-zinc-300">Execution, Market, Trade + Signal Suite, Chart Lab, Portfolio, Journal</p>
+                <p className="mt-2 text-sm text-zinc-300">Execution, Market, Economy News, Trade + Signal Suite, Chart Lab, Portfolio, Journal</p>
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Data Session</p>

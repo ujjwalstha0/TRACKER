@@ -1,16 +1,21 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  evaluateSignalNotebookClose,
   fetchIndicators,
   fetchIndices,
   fetchPortfolio,
   fetchSignal,
+  fetchSignalNotebookToday,
   fetchWatchlist,
+  generateSignalNotebook,
 } from '../../lib/api';
 import {
   AuthUser,
   HoldingRow,
   IndexApiRow,
   PortfolioResponse,
+  SignalNotebookEntry,
+  SignalNotebookResponse,
   TradingSignalResponse,
   WatchlistApiRow,
 } from '../../types';
@@ -84,6 +89,11 @@ function formatMoney(value: number | null): string {
 function formatPercent(value: number | null, digits = 2): string {
   if (value === null) return '-';
   return `${value.toFixed(digits)}%`;
+}
+
+function formatCompactPrice(value: number | null | undefined): string {
+  if (value === null || value === undefined) return '-';
+  return formatMoney(value);
 }
 
 function severityClasses(severity: AlertSeverity): string {
@@ -183,6 +193,10 @@ export function EdgeSuiteTerminalPage({ user }: { user: AuthUser | null }) {
   const [portfolio, setPortfolio] = useState<PortfolioResponse | null>(null);
   const [riskLoading, setRiskLoading] = useState(false);
   const [riskError, setRiskError] = useState('');
+  const [notebook, setNotebook] = useState<SignalNotebookResponse | null>(null);
+  const [notebookLoading, setNotebookLoading] = useState(false);
+  const [notebookError, setNotebookError] = useState('');
+  const [notebookAction, setNotebookAction] = useState<'generate' | 'evaluate' | null>(null);
   const [riskLimits, setRiskLimits] = useState<RiskLimits>({
     maxSectorPct: '35',
     maxSinglePositionPct: '12',
@@ -211,6 +225,48 @@ export function EdgeSuiteTerminalPage({ user }: { user: AuthUser | null }) {
       setRiskLoading(false);
     }
   }, [user]);
+
+  const loadSignalNotebook = useCallback(async () => {
+    setNotebookLoading(true);
+
+    try {
+      const response = await fetchSignalNotebookToday();
+      setNotebook(response);
+      setNotebookError('');
+    } catch (error) {
+      setNotebookError(error instanceof Error ? error.message : 'Failed to load signal notebook.');
+    } finally {
+      setNotebookLoading(false);
+    }
+  }, []);
+
+  const handleGenerateNotebook = useCallback(async () => {
+    setNotebookAction('generate');
+
+    try {
+      const response = await generateSignalNotebook(70);
+      setNotebook(response);
+      setNotebookError('');
+    } catch (error) {
+      setNotebookError(error instanceof Error ? error.message : 'Failed to generate notebook.');
+    } finally {
+      setNotebookAction(null);
+    }
+  }, []);
+
+  const handleEvaluateNotebook = useCallback(async () => {
+    setNotebookAction('evaluate');
+
+    try {
+      const response = await evaluateSignalNotebookClose();
+      setNotebook(response);
+      setNotebookError('');
+    } catch (error) {
+      setNotebookError(error instanceof Error ? error.message : 'Failed to evaluate notebook.');
+    } finally {
+      setNotebookAction(null);
+    }
+  }, []);
 
   const loadMarketData = useCallback(async () => {
     setLoadingMarket(true);
@@ -348,6 +404,16 @@ export function EdgeSuiteTerminalPage({ user }: { user: AuthUser | null }) {
   useEffect(() => {
     void loadPortfolioRisk();
   }, [loadPortfolioRisk]);
+
+  useEffect(() => {
+    void loadSignalNotebook();
+
+    const timer = setInterval(() => {
+      void loadSignalNotebook();
+    }, 60_000);
+
+    return () => clearInterval(timer);
+  }, [loadSignalNotebook]);
 
   const runBacktest = useCallback(
     async (event?: FormEvent<HTMLFormElement>) => {
@@ -777,6 +843,14 @@ export function EdgeSuiteTerminalPage({ user }: { user: AuthUser | null }) {
     };
   }, [signalsBySymbol, watchlist]);
 
+  const notebookPreview = useMemo(() => {
+    const entries = notebook?.entries ?? [];
+    const sorted = [...entries].sort((a, b) => b.qualityScore - a.qualityScore);
+    return sorted.slice(0, 12);
+  }, [notebook?.entries]);
+
+  const notebookSummary = notebook?.summary ?? null;
+
   return (
     <section className="space-y-6">
       <header className="relative overflow-hidden rounded-2xl border border-terminal-border/70 bg-terminal-panel/80 p-6 shadow-terminal">
@@ -795,6 +869,15 @@ export function EdgeSuiteTerminalPage({ user }: { user: AuthUser | null }) {
             <button type="button" onClick={() => void loadPortfolioRisk()} className="terminal-btn">
               {riskLoading ? 'Loading risk...' : 'Refresh Portfolio Risk'}
             </button>
+            <button type="button" onClick={() => void loadSignalNotebook()} className="terminal-btn">
+              {notebookLoading ? 'Loading notebook...' : 'Refresh Notebook'}
+            </button>
+            <button type="button" onClick={() => void handleGenerateNotebook()} className="terminal-btn-primary">
+              {notebookAction === 'generate' ? 'Generating notes...' : 'Generate Today Buy/Sell Notes'}
+            </button>
+            <button type="button" onClick={() => void handleEvaluateNotebook()} className="terminal-btn">
+              {notebookAction === 'evaluate' ? 'Evaluating close...' : 'Evaluate At Market Close'}
+            </button>
           </div>
           <p className="mt-3 text-xs text-zinc-500">
             Last refresh: {lastRefreshedAt ? new Date(lastRefreshedAt).toLocaleString() : 'Not refreshed yet'}
@@ -804,6 +887,7 @@ export function EdgeSuiteTerminalPage({ user }: { user: AuthUser | null }) {
 
       {marketError ? <p className="text-sm font-medium text-terminal-red">{marketError}</p> : null}
       {riskError ? <p className="text-sm font-medium text-terminal-red">{riskError}</p> : null}
+      {notebookError ? <p className="text-sm font-medium text-terminal-red">{notebookError}</p> : null}
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <article className="terminal-card p-4">
@@ -825,6 +909,105 @@ export function EdgeSuiteTerminalPage({ user }: { user: AuthUser | null }) {
             Classified {universeClassification.classified} | Unclassified {universeClassification.unclassified}
           </p>
         </article>
+      </section>
+
+      <section className="terminal-card overflow-hidden">
+        <header className="border-b border-zinc-800 p-4">
+          <h2 className="text-base font-semibold text-white">Daily Buy/Sell Notebook</h2>
+          <p className="mt-1 text-xs text-zinc-500">
+            Stores today&apos;s system recommendations with entry, stop-loss, target, reasoning, and close-session accuracy review.
+          </p>
+        </header>
+
+        <div className="space-y-4 p-4">
+          <div className="grid gap-3 md:grid-cols-5">
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+              <p className="text-xs uppercase tracking-wide text-zinc-500">Entries</p>
+              <p className="mt-2 font-mono text-lg font-bold text-white">{notebookSummary?.total ?? 0}</p>
+            </div>
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+              <p className="text-xs uppercase tracking-wide text-zinc-500">BUY / SELL</p>
+              <p className="mt-2 font-mono text-lg font-bold text-cyan-200">
+                {notebookSummary?.buyCount ?? 0} / {notebookSummary?.sellCount ?? 0}
+              </p>
+            </div>
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+              <p className="text-xs uppercase tracking-wide text-zinc-500">Pending</p>
+              <p className="mt-2 font-mono text-lg font-bold text-terminal-amber">{notebookSummary?.pendingCount ?? 0}</p>
+            </div>
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+              <p className="text-xs uppercase tracking-wide text-zinc-500">Win Rate</p>
+              <p className="mt-2 font-mono text-lg font-bold text-terminal-green">{formatPercent(notebookSummary?.winRatePct ?? 0)}</p>
+            </div>
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+              <p className="text-xs uppercase tracking-wide text-zinc-500">Avg Accuracy</p>
+              <p className="mt-2 font-mono text-lg font-bold text-white">{formatPercent(notebookSummary?.averageAccuracyPct ?? 0)}</p>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto rounded-lg border border-zinc-800">
+            <table className="min-w-full divide-y divide-zinc-800 text-sm">
+              <thead className="bg-black/40 text-xs uppercase tracking-wide text-zinc-500">
+                <tr>
+                  <th className="px-3 py-2 text-left">Symbol</th>
+                  <th className="px-3 py-2 text-left">Signal</th>
+                  <th className="px-3 py-2 text-right">Entry</th>
+                  <th className="px-3 py-2 text-right">Stop</th>
+                  <th className="px-3 py-2 text-right">Target</th>
+                  <th className="px-3 py-2 text-right">R:R</th>
+                  <th className="px-3 py-2 text-right">Quality</th>
+                  <th className="px-3 py-2 text-left">Outcome</th>
+                  <th className="px-3 py-2 text-right">Accuracy</th>
+                  <th className="px-3 py-2 text-left">Why</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-900/80">
+                {notebookPreview.length ? (
+                  notebookPreview.map((entry: SignalNotebookEntry) => (
+                    <tr key={`notebook-${entry.id}`}>
+                      <td className="px-3 py-2 font-mono text-zinc-100">{entry.symbol}</td>
+                      <td className={
+                        entry.signal === 'BUY'
+                          ? 'px-3 py-2 text-terminal-green'
+                          : 'px-3 py-2 text-terminal-red'
+                      }>
+                        {entry.signal}
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono text-zinc-200">{formatCompactPrice(entry.entryPrice)}</td>
+                      <td className="px-3 py-2 text-right font-mono text-zinc-300">{formatCompactPrice(entry.stopLoss)}</td>
+                      <td className="px-3 py-2 text-right font-mono text-zinc-300">{formatCompactPrice(entry.targetPrice)}</td>
+                      <td className="px-3 py-2 text-right font-mono text-zinc-300">{entry.riskReward.toFixed(2)}</td>
+                      <td className="px-3 py-2 text-right font-mono text-zinc-300">{entry.qualityScore.toFixed(1)}%</td>
+                      <td className={
+                        entry.outcome === 'HIT_TARGET' || entry.outcome === 'MOVED_IN_FAVOR'
+                          ? 'px-3 py-2 text-terminal-green'
+                          : entry.outcome === 'HIT_STOP' || entry.outcome === 'MOVED_AGAINST'
+                            ? 'px-3 py-2 text-terminal-red'
+                            : 'px-3 py-2 text-terminal-amber'
+                      }>
+                        {entry.outcome}
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono text-zinc-300">
+                        {entry.accuracyScore === null ? '-' : `${entry.accuracyScore.toFixed(0)}%`}
+                      </td>
+                      <td className="max-w-[360px] px-3 py-2 text-xs text-zinc-400">{entry.reasons[0] ?? '-'}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={10} className="px-3 py-6 text-center text-zinc-500">
+                      No notebook entries yet. Click "Generate Today Buy/Sell Notes" to create your daily recommendation log.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <p className="text-xs text-zinc-500">
+            Evaluated entries are scored after market close using latest available market price against entry, stop-loss, and target rules.
+          </p>
+        </div>
       </section>
 
       <section className="grid gap-5 xl:grid-cols-2">
@@ -996,7 +1179,11 @@ export function EdgeSuiteTerminalPage({ user }: { user: AuthUser | null }) {
                       <li key={`buy-${row.symbol}`} className="flex items-center justify-between gap-3">
                         <span className="font-mono text-zinc-100">{row.symbol}</span>
                         <span className="text-xs text-zinc-400">
-                          {row.signal?.signal ?? 'HOLD'} S{row.signal?.strength ?? 0} | T ₹ {formatMoney(row.turnover ?? 0)}
+                          {row.signal?.signal ?? 'HOLD'} S{row.signal?.strength ?? 0}
+                          {row.signal?.plan
+                            ? ` | E ${formatCompactPrice(row.signal.plan.entryPrice)} / SL ${formatCompactPrice(row.signal.plan.stopLoss)} / TP ${formatCompactPrice(row.signal.plan.targetPrice)}`
+                            : ''}
+                          {` | T ₹ ${formatMoney(row.turnover ?? 0)}`}
                         </span>
                       </li>
                     ))
@@ -1014,7 +1201,11 @@ export function EdgeSuiteTerminalPage({ user }: { user: AuthUser | null }) {
                       <li key={`sell-${row.symbol}`} className="flex items-center justify-between gap-3">
                         <span className="font-mono text-zinc-100">{row.symbol}</span>
                         <span className="text-xs text-zinc-400">
-                          {row.signal?.signal ?? 'HOLD'} S{row.signal?.strength ?? 0} | T ₹ {formatMoney(row.turnover ?? 0)}
+                          {row.signal?.signal ?? 'HOLD'} S{row.signal?.strength ?? 0}
+                          {row.signal?.plan
+                            ? ` | E ${formatCompactPrice(row.signal.plan.entryPrice)} / SL ${formatCompactPrice(row.signal.plan.stopLoss)} / TP ${formatCompactPrice(row.signal.plan.targetPrice)}`
+                            : ''}
+                          {` | T ₹ ${formatMoney(row.turnover ?? 0)}`}
                         </span>
                       </li>
                     ))
