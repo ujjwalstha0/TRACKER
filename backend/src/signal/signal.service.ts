@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { OhlcService } from '../ohlc/ohlc.service';
+import { OhlcCandleDto } from '../ohlc/ohlc.types';
 import { SignalInputData, TradingSignalKind, TradingSignalResult } from './signal.types';
 
 const TRADING_SIGNALS = {
@@ -12,11 +13,31 @@ const TRADING_SIGNALS = {
   HOLD: 0,
 } as const;
 
-const SIGNAL_INTERVAL = '1m';
-const SIGNAL_LIMIT = 220;
+type SignalInterval = '1m' | '5m' | '15m' | '1h' | '1d';
+
+const SIGNAL_INTERVAL_CANDIDATES: ReadonlyArray<{
+  interval: SignalInterval;
+  limit: number;
+  minCandles: number;
+}> = [
+  { interval: '1m', limit: 220, minCandles: 80 },
+  { interval: '5m', limit: 260, minCandles: 80 },
+  { interval: '15m', limit: 260, minCandles: 80 },
+  { interval: '1h', limit: 320, minCandles: 80 },
+  { interval: '1d', limit: 320, minCandles: 60 },
+];
+
+const SIGNAL_CACHE_TTL_MS = 10_000;
+
+interface SignalCandleSelection {
+  interval: SignalInterval;
+  candles: OhlcCandleDto[];
+}
 
 @Injectable()
 export class SignalService {
+  private readonly signalCache = new Map<string, { fetchedAt: number; result: TradingSignalResult }>();
+
   constructor(private readonly ohlcService: OhlcService) {}
 
   async calculateSignal(symbol: string): Promise<TradingSignalResult> {
@@ -25,11 +46,14 @@ export class SignalService {
       throw new BadRequestException('Query param "symbol" is required.');
     }
 
-    const candles = await this.ohlcService.getCandles({
-      symbol: normalizedSymbol,
-      interval: SIGNAL_INTERVAL,
-      limit: SIGNAL_LIMIT,
-    });
+    const now = Date.now();
+    const cached = this.signalCache.get(normalizedSymbol);
+    if (cached && now - cached.fetchedAt < SIGNAL_CACHE_TTL_MS) {
+      return cached.result;
+    }
+
+    const selection = await this.loadBestSignalCandles(normalizedSymbol);
+    const candles = selection.candles;
 
     if (!candles.length) {
       return this.buildNoDataSignal('No candle history available for this symbol yet.');
@@ -66,6 +90,12 @@ export class SignalService {
       bbUpper: bollinger.upper[currentIndex],
     });
 
+    if (!this.hasFiniteSignalInputs(data)) {
+      return this.buildNoDataSignal(
+        `Insufficient ${selection.interval} indicator history for reliable signal yet.`,
+      );
+    }
+
     const prevData =
       prevIndex >= 0
         ? this.buildSignalInput({
@@ -83,7 +113,44 @@ export class SignalService {
           })
         : undefined;
 
-    return this.calculateTradingSignal(data, prevData);
+    const result = this.calculateTradingSignal(data, prevData);
+    this.signalCache.set(normalizedSymbol, {
+      fetchedAt: now,
+      result,
+    });
+
+    return result;
+  }
+
+  private async loadBestSignalCandles(symbol: string): Promise<SignalCandleSelection> {
+    let best: SignalCandleSelection = {
+      interval: '1m',
+      candles: [],
+    };
+
+    for (const candidate of SIGNAL_INTERVAL_CANDIDATES) {
+      const candles = await this.ohlcService.getCandles({
+        symbol,
+        interval: candidate.interval,
+        limit: candidate.limit,
+      });
+
+      if (candles.length > best.candles.length) {
+        best = {
+          interval: candidate.interval,
+          candles,
+        };
+      }
+
+      if (candles.length >= candidate.minCandles) {
+        return {
+          interval: candidate.interval,
+          candles,
+        };
+      }
+    }
+
+    return best;
   }
 
   private buildNoDataSignal(reason: string): TradingSignalResult {
@@ -96,6 +163,12 @@ export class SignalService {
       reasons: [reason],
       recommendedAction: 'WAIT',
     };
+  }
+
+  private hasFiniteSignalInputs(data: SignalInputData): boolean {
+    return [data.ema8, data.ema21, data.ema20, data.ema50, data.rsi14, data.close, data.vwap].every(
+      (value) => Number.isFinite(value),
+    );
   }
 
   private calculateTradingSignal(data: SignalInputData, prevData?: SignalInputData): TradingSignalResult {

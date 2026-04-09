@@ -3,6 +3,8 @@ import { fetchSignal, fetchWatchlist } from '../../lib/api';
 import { confidenceBadgeClass, signalBadgeClass, signalLabel } from '../../lib/signal-ui';
 import { TradingSignalResponse, WatchlistApiRow } from '../../types';
 
+const SIGNAL_POLL_INTERVAL_MS = 20_000;
+
 interface SignalRow {
   symbol: string;
   company: string | null;
@@ -15,11 +17,18 @@ export function SignalDashboardTerminalPage() {
   const [sellRows, setSellRows] = useState<SignalRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [refreshTick, setRefreshTick] = useState(0);
 
   useEffect(() => {
     let active = true;
+    let inFlight = false;
 
     const load = async () => {
+      if (inFlight) {
+        return;
+      }
+
+      inFlight = true;
       setLoading(true);
       setError('');
 
@@ -27,7 +36,7 @@ export function SignalDashboardTerminalPage() {
         const watchlist = await fetchWatchlist();
         const universe = [...watchlist]
           .sort((a, b) => (b.turnover ?? 0) - (a.turnover ?? 0))
-          .slice(0, 80);
+          .slice(0, 60);
 
         const resolved = await Promise.all(
           universe.map(async (row) => {
@@ -69,15 +78,21 @@ export function SignalDashboardTerminalPage() {
       } finally {
         if (!active) return;
         setLoading(false);
+        inFlight = false;
       }
     };
 
     void load();
 
+    const timer = setInterval(() => {
+      void load();
+    }, SIGNAL_POLL_INTERVAL_MS);
+
     return () => {
       active = false;
+      clearInterval(timer);
     };
-  }, []);
+  }, [refreshTick]);
 
   const summary = useMemo(() => {
     return {
@@ -92,7 +107,17 @@ export function SignalDashboardTerminalPage() {
     <section className="space-y-5">
       <header className="space-y-1">
         <p className="text-xs uppercase tracking-[0.22em] text-zinc-500">Signal Dashboard</p>
-        <h1 className="text-2xl font-semibold text-white">Top 5 BUY and SELL Signals</h1>
+        <div className="flex items-center justify-between gap-3">
+          <h1 className="text-2xl font-semibold text-white">Top 5 BUY and SELL Signals</h1>
+          <button
+            type="button"
+            onClick={() => setRefreshTick((value) => value + 1)}
+            className="terminal-btn"
+            disabled={loading}
+          >
+            {loading ? 'Refreshing...' : 'Refresh'}
+          </button>
+        </div>
       </header>
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">

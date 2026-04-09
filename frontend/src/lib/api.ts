@@ -158,7 +158,7 @@ export async function fetchBuyTrades(): Promise<TradeRow[]> {
 }
 
 export async function fetchWatchlist(): Promise<WatchlistApiRow[]> {
-  const res = await fetch(`${API_BASE}/watchlist`);
+  const res = await fetch(`${API_BASE}/watchlist`, { cache: 'no-store' });
   if (!res.ok) {
     throw new Error('Failed to load watchlist');
   }
@@ -166,7 +166,7 @@ export async function fetchWatchlist(): Promise<WatchlistApiRow[]> {
 }
 
 export async function fetchIndices(): Promise<IndexApiRow[]> {
-  const res = await fetch(`${API_BASE}/indices`);
+  const res = await fetch(`${API_BASE}/indices`, { cache: 'no-store' });
   if (!res.ok) {
     throw new Error('Failed to load indices');
   }
@@ -174,7 +174,7 @@ export async function fetchIndices(): Promise<IndexApiRow[]> {
 }
 
 export async function fetchMarketStatus(): Promise<MarketStatusResponse> {
-  const res = await fetch(`${API_BASE}/market/status`);
+  const res = await fetch(`${API_BASE}/market/status`, { cache: 'no-store' });
   if (!res.ok) {
     throw new Error('Failed to load market status');
   }
@@ -189,7 +189,7 @@ export async function fetchOhlc(symbol: string, interval = '1d', limit = 240): P
     limit: String(limit),
   });
 
-  const res = await fetch(`${API_BASE}/ohlc?${params.toString()}`);
+  const res = await fetch(`${API_BASE}/ohlc?${params.toString()}`, { cache: 'no-store' });
   if (!res.ok) {
     throw new Error('Failed to load OHLC data');
   }
@@ -204,7 +204,7 @@ export async function fetchIndicators(symbol: string, interval = '1d', limit = 2
     limit: String(limit),
   });
 
-  const res = await fetch(`${API_BASE}/indicators?${params.toString()}`);
+  const res = await fetch(`${API_BASE}/indicators?${params.toString()}`, { cache: 'no-store' });
   if (!res.ok) {
     throw new Error('Failed to load indicators');
   }
@@ -217,7 +217,7 @@ export async function fetchSignal(symbol: string): Promise<TradingSignalResponse
     symbol: symbol.trim().toUpperCase(),
   });
 
-  const res = await fetch(`${API_BASE}/signal?${params.toString()}`);
+  const res = await fetch(`${API_BASE}/signal?${params.toString()}`, { cache: 'no-store' });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { message?: string | string[] };
     throw new Error(parseErrorMessage(body, 'Failed to load trading signal'));

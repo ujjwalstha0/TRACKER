@@ -9,6 +9,9 @@ import { IndicatorsResponse, TradingSignalResponse, WatchlistApiRow } from '../.
 const INTERVALS = ['1m', '5m', '15m', '1h', '1d'] as const;
 type Interval = (typeof INTERVALS)[number];
 
+const CHART_REFRESH_INTERVAL_MS = 15_000;
+const SIGNAL_REFRESH_INTERVAL_MS = 10_000;
+
 function formatMoney(value: number): string {
   return new Intl.NumberFormat('en-IN', {
     minimumFractionDigits: 2,
@@ -117,6 +120,12 @@ export function ChartDeskTerminalPage() {
 
   useEffect(() => {
     void loadData();
+
+    const timer = window.setInterval(() => {
+      void loadData();
+    }, CHART_REFRESH_INTERVAL_MS);
+
+    return () => window.clearInterval(timer);
   }, [loadData]);
 
   useEffect(() => {
@@ -127,18 +136,26 @@ export function ChartDeskTerminalPage() {
 
     let active = true;
 
-    fetchSignal(selectedSymbol)
-      .then((response) => {
+    const loadSignal = async () => {
+      try {
+        const response = await fetchSignal(selectedSymbol);
         if (!active) return;
         setSignal(response);
-      })
-      .catch(() => {
+      } catch {
         if (!active) return;
         setSignal(null);
-      });
+      }
+    };
+
+    void loadSignal();
+
+    const timer = window.setInterval(() => {
+      void loadSignal();
+    }, SIGNAL_REFRESH_INTERVAL_MS);
 
     return () => {
       active = false;
+      window.clearInterval(timer);
     };
   }, [selectedSymbol]);
 

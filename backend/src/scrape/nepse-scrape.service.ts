@@ -102,13 +102,73 @@ export class NepseScrapeService {
   ) {}
 
   async scrapeTodayPrices(): Promise<PriceDto[]> {
-    const html = await this.fetchHtmlWithFallback(this.config.todayPriceUrl, [FALLBACK_TODAY_PRICE_URL]);
-    return this.parseTodayPrices(html);
+    const [liveRows, todayRows] = await Promise.all([
+      this.tryScrapePriceRows(this.config.liveTradingUrl, [FALLBACK_LIVE_TRADING_URL]),
+      this.tryScrapePriceRows(this.config.todayPriceUrl, [FALLBACK_TODAY_PRICE_URL]),
+    ]);
+
+    const merged = this.mergePriceRows(liveRows, todayRows);
+    if (merged.length) {
+      return merged;
+    }
+
+    throw new Error('Unable to parse price rows from all sources.');
   }
 
   async scrapeIndices(): Promise<IndexValueDto[]> {
     const html = await this.fetchHtmlWithFallback(this.config.liveTradingUrl, [FALLBACK_LIVE_TRADING_URL]);
     return this.parseIndices(html);
+  }
+
+  private async tryScrapePriceRows(primaryUrl: string, fallbackUrls: string[]): Promise<PriceDto[]> {
+    try {
+      const html = await this.fetchHtmlWithFallback(primaryUrl, fallbackUrls);
+      return this.parseTodayPrices(html);
+    } catch {
+      this.logger.warn(`Price source failed: ${primaryUrl}`);
+      return [];
+    }
+  }
+
+  private mergePriceRows(primaryRows: PriceDto[], fallbackRows: PriceDto[]): PriceDto[] {
+    const merged = new Map<string, PriceDto>();
+
+    const absorb = (row: PriceDto, preferIncoming: boolean) => {
+      const symbol = row.symbol.trim().toUpperCase();
+      if (!symbol) return;
+
+      const existing = merged.get(symbol);
+      if (!existing) {
+        merged.set(symbol, { ...row, symbol });
+        return;
+      }
+
+      const incomingLtpValid = Number.isFinite(row.ltp) && row.ltp > 0;
+
+      merged.set(symbol, {
+        symbol,
+        company: row.company ?? existing.company,
+        sector: row.sector ?? existing.sector,
+        ltp: preferIncoming ? (incomingLtpValid ? row.ltp : existing.ltp) : existing.ltp,
+        change: preferIncoming ? row.change ?? existing.change : existing.change ?? row.change,
+        changePct: preferIncoming ? row.changePct ?? existing.changePct : existing.changePct ?? row.changePct,
+        open: preferIncoming ? row.open ?? existing.open : existing.open ?? row.open,
+        high: preferIncoming ? row.high ?? existing.high : existing.high ?? row.high,
+        low: preferIncoming ? row.low ?? existing.low : existing.low ?? row.low,
+        volume: preferIncoming ? row.volume ?? existing.volume : existing.volume ?? row.volume,
+        turnover: preferIncoming ? row.turnover ?? existing.turnover : existing.turnover ?? row.turnover,
+      });
+    };
+
+    for (const row of fallbackRows) {
+      absorb(row, true);
+    }
+
+    for (const row of primaryRows) {
+      absorb(row, true);
+    }
+
+    return [...merged.values()];
   }
 
   async scrapeMarketStatus(): Promise<MarketStatusDto> {
@@ -698,7 +758,7 @@ export class NepseScrapeService {
 
   private parseTodayPrices(html: string): PriceDto[] {
     const $ = cheerio.load(html);
-    const table = this.findTable($, ['symbol', 'ltp']);
+    const table = this.findLargestMatchingTable($, ['symbol', 'ltp']);
     if (!table) return [];
 
     const headers = this.extractHeaders($, table);
@@ -742,6 +802,34 @@ export class NepseScrapeService {
     }
 
     return parsed;
+  }
+
+  private findLargestMatchingTable(
+    $: cheerio.CheerioAPI,
+    requiredHeaderFragments: string[],
+  ): cheerio.Cheerio<AnyNode> | null {
+    let bestTable: cheerio.Cheerio<AnyNode> | null = null;
+    let bestRowCount = -1;
+
+    for (const table of $('table').toArray()) {
+      const tableEl = $(table);
+      const headers = this.extractHeaders($, tableEl);
+      const normalized = headers.map((h) => this.normalize(h));
+
+      const hasAll = requiredHeaderFragments.every((fragment) =>
+        normalized.some((header) => header.includes(this.normalize(fragment))),
+      );
+
+      if (!hasAll) continue;
+
+      const rowCount = this.extractRows($, tableEl).length;
+      if (rowCount > bestRowCount) {
+        bestTable = tableEl;
+        bestRowCount = rowCount;
+      }
+    }
+
+    return bestTable;
   }
 
   private parseSymbolProfiles(html: string): Map<string, SymbolProfile> {

@@ -4,7 +4,7 @@ import { fetchIndices, fetchSignal, fetchWatchlist } from '../../lib/api';
 import { confidenceBadgeClass, signalBadgeClass, signalLabel } from '../../lib/signal-ui';
 import { IndexApiRow, TradingSignalResponse, WatchlistApiRow } from '../../types';
 
-const POLL_INTERVAL = 30_000;
+const POLL_INTERVAL = 10_000;
 const PAGE_SIZE = 20;
 
 type SortKey = 'symbol' | 'ltp' | 'change_pct' | 'volume' | 'turnover';
