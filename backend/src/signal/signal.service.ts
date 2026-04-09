@@ -179,9 +179,17 @@ export class SignalService {
     const hasValidBands =
       Number.isFinite(data.bbLower) && Number.isFinite(data.bbUpper) && data.bbUpper > data.bbLower;
 
-    if (data.ema8 > data.ema21 && (prevData ? prevData.ema8 <= prevData.ema21 : false)) {
-      buyScore += 3;
-      buyReasons.push('EMA8 crossed ABOVE EMA21');
+    const emaBull = data.ema8 > data.ema21;
+    const emaBear = data.ema8 < data.ema21;
+
+    if (emaBull) {
+      buyScore += 2;
+      buyReasons.push('EMA8 > EMA21');
+
+      if (prevData ? prevData.ema8 <= prevData.ema21 : false) {
+        buyScore += 1;
+        buyReasons.push('Fresh bullish crossover');
+      }
     }
 
     if (data.ema20 > data.ema50) {
@@ -189,7 +197,7 @@ export class SignalService {
       buyReasons.push('EMA20 > EMA50 (uptrend)');
     }
 
-    if (data.rsi14 < 65 && data.rsi14 > 30) {
+    if (data.rsi14 >= 34 && data.rsi14 <= 74) {
       buyScore += 1;
       buyReasons.push('RSI neutral-bullish');
     }
@@ -199,9 +207,9 @@ export class SignalService {
       buyReasons.push('Price > VWAP');
     }
 
-    if (data.avgVolume20 > 0 && data.volume > data.avgVolume20 * 1.5) {
+    if (data.avgVolume20 > 0 && data.volume > data.avgVolume20 * 1.2) {
       buyScore += 1;
-      buyReasons.push('High volume');
+      buyReasons.push('Volume confirmation');
     }
 
     if (hasValidBands) {
@@ -214,9 +222,14 @@ export class SignalService {
       }
     }
 
-    if (data.ema8 < data.ema21 && (prevData ? prevData.ema8 >= prevData.ema21 : false)) {
-      sellScore += 3;
-      sellReasons.push('EMA8 crossed BELOW EMA21');
+    if (emaBear) {
+      sellScore += 2;
+      sellReasons.push('EMA8 < EMA21');
+
+      if (prevData ? prevData.ema8 >= prevData.ema21 : false) {
+        sellScore += 1;
+        sellReasons.push('Fresh bearish crossover');
+      }
     }
 
     if (data.ema20 < data.ema50) {
@@ -224,7 +237,7 @@ export class SignalService {
       sellReasons.push('EMA20 < EMA50 (downtrend)');
     }
 
-    if (data.rsi14 > 35 && data.rsi14 < 75) {
+    if (data.rsi14 >= 26 && data.rsi14 <= 68) {
       sellScore += 1;
       sellReasons.push('RSI neutral-bearish');
     }
@@ -234,29 +247,29 @@ export class SignalService {
       sellReasons.push('Price < VWAP');
     }
 
-    if (data.avgVolume20 > 0 && data.volume > data.avgVolume20 * 1.5) {
+    if (data.avgVolume20 > 0 && data.volume > data.avgVolume20 * 1.2) {
       sellScore += 1;
-      sellReasons.push('High volume');
+      sellReasons.push('Volume confirmation');
     }
 
     const hasBuyConfluence =
-      data.ema8 > data.ema21 &&
-      data.ema20 > data.ema50 &&
+      emaBull &&
       data.close > data.vwap &&
-      data.rsi14 >= 40 &&
-      data.rsi14 <= 65;
+      data.rsi14 >= 35 &&
+      data.rsi14 <= 75 &&
+      (data.ema20 >= data.ema50 || buyScore >= TRADING_SIGNALS.BUY_MEDIUM);
 
     const hasSellConfluence =
-      data.ema8 < data.ema21 &&
-      data.ema20 < data.ema50 &&
+      emaBear &&
       data.close < data.vwap &&
-      data.rsi14 >= 35 &&
-      data.rsi14 <= 60;
+      data.rsi14 >= 25 &&
+      data.rsi14 <= 68 &&
+      (data.ema20 <= data.ema50 || sellScore >= TRADING_SIGNALS.SELL_MEDIUM);
 
     const isStrongBuy =
-      hasBuyConfluence && buyScore >= TRADING_SIGNALS.BUY_HIGH && buyScore >= sellScore + 2;
+      hasBuyConfluence && buyScore >= 3 && buyScore >= sellScore + 1;
     const isStrongSell =
-      hasSellConfluence && sellScore >= TRADING_SIGNALS.SELL_HIGH && sellScore >= buyScore + 2;
+      hasSellConfluence && sellScore >= 3 && sellScore >= buyScore + 1;
 
     const signal: TradingSignalKind = isStrongBuy ? 'BUY' : isStrongSell ? 'SELL' : 'HOLD';
 

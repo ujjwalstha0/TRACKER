@@ -16,6 +16,8 @@ import {
 } from '../../types';
 
 const MARKET_POLL_INTERVAL = 45_000;
+const SIGNAL_UNIVERSE_SIZE = 120;
+const SIGNAL_FETCH_BATCH_SIZE = 8;
 
 type AlertSeverity = 'HIGH' | 'MEDIUM' | 'LOW';
 
@@ -102,6 +104,38 @@ function mergeAlerts(existing: AlertItem[], incoming: AlertItem[]): AlertItem[] 
   return merged.slice(0, 120);
 }
 
+async function fetchSignalWithRetry(symbol: string): Promise<TradingSignalResponse | null> {
+  try {
+    return await fetchSignal(symbol);
+  } catch {
+    try {
+      return await fetchSignal(symbol);
+    } catch {
+      return null;
+    }
+  }
+}
+
+async function fetchSignalsBySymbol(symbols: string[]): Promise<Record<string, TradingSignalResponse | null>> {
+  const signalMap: Record<string, TradingSignalResponse | null> = {};
+
+  for (let index = 0; index < symbols.length; index += SIGNAL_FETCH_BATCH_SIZE) {
+    const batch = symbols.slice(index, index + SIGNAL_FETCH_BATCH_SIZE);
+    const entries = await Promise.all(
+      batch.map(async (symbol) => {
+        const signal = await fetchSignalWithRetry(symbol);
+        return [symbol, signal] as const;
+      }),
+    );
+
+    for (const [symbol, signal] of entries) {
+      signalMap[symbol] = signal;
+    }
+  }
+
+  return signalMap;
+}
+
 function computeMarketBias(indices: IndexApiRow[], watchlist: WatchlistApiRow[]): {
   label: 'BULLISH' | 'NEUTRAL' | 'BEARISH';
   breadthRatio: number;
@@ -186,23 +220,18 @@ export function EdgeSuiteTerminalPage({ user }: { user: AuthUser | null }) {
 
       const universe = [...watchlistRows]
         .sort((a, b) => (b.turnover ?? 0) - (a.turnover ?? 0))
-        .slice(0, 60);
+        .slice(0, SIGNAL_UNIVERSE_SIZE);
 
-      const signalEntries = await Promise.all(
-        universe.map(async (row) => {
-          try {
-            const signal = await fetchSignal(row.symbol);
-            return [row.symbol, signal] as const;
-          } catch {
-            return [row.symbol, null] as const;
-          }
-        }),
-      );
+      const fetchedSignals = await fetchSignalsBySymbol(universe.map((row) => row.symbol));
 
       const signalMap: Record<string, TradingSignalResponse> = {};
-      for (const [symbol, signal] of signalEntries) {
-        if (signal) {
-          signalMap[symbol] = signal;
+      for (const row of universe) {
+        const latestSignal = fetchedSignals[row.symbol];
+        const previousSignal = previousSignalsRef.current[row.symbol];
+        const resolvedSignal = latestSignal ?? previousSignal ?? null;
+
+        if (resolvedSignal) {
+          signalMap[row.symbol] = resolvedSignal;
         }
       }
 
@@ -599,29 +628,51 @@ export function EdgeSuiteTerminalPage({ user }: { user: AuthUser | null }) {
 
     const topUniverse = [...watchlist]
       .sort((a, b) => (b.turnover ?? 0) - (a.turnover ?? 0))
-      .slice(0, 60)
+      .slice(0, SIGNAL_UNIVERSE_SIZE)
       .map((row) => ({
         ...row,
         signal: signalsBySymbol[row.symbol],
       }));
 
-    const topBuy = topUniverse
-      .filter((row) => row.signal?.signal === 'BUY')
-      .sort(
-        (a, b) =>
-          (b.signal?.strength ?? 0) - (a.signal?.strength ?? 0) ||
-          (b.turnover ?? 0) - (a.turnover ?? 0),
-      )
-      .slice(0, 5);
+    const actionableUniverse = topUniverse.filter(
+      (row): row is WatchlistApiRow & { signal: TradingSignalResponse } => Boolean(row.signal),
+    );
 
-    const topSell = topUniverse
-      .filter((row) => row.signal?.signal === 'SELL')
-      .sort(
-        (a, b) =>
-          (b.signal?.strength ?? 0) - (a.signal?.strength ?? 0) ||
-          (b.turnover ?? 0) - (a.turnover ?? 0),
+    const rankedForBuy = [...actionableUniverse].sort(
+      (a, b) =>
+        (b.signal.buyScore - b.signal.sellScore) - (a.signal.buyScore - a.signal.sellScore) ||
+        b.signal.strength - a.signal.strength ||
+        (b.turnover ?? 0) - (a.turnover ?? 0),
+    );
+
+    const rankedForSell = [...actionableUniverse].sort(
+      (a, b) =>
+        (b.signal.sellScore - b.signal.buyScore) - (a.signal.sellScore - a.signal.buyScore) ||
+        b.signal.strength - a.signal.strength ||
+        (b.turnover ?? 0) - (a.turnover ?? 0),
+    );
+
+    const buyPrimary = rankedForBuy.filter((row) => row.signal.signal === 'BUY').slice(0, 5);
+    const buyFallback = rankedForBuy
+      .filter(
+        (row) =>
+          row.signal.signal !== 'BUY' &&
+          row.signal.buyScore > row.signal.sellScore &&
+          !buyPrimary.some((picked) => picked.symbol === row.symbol),
       )
-      .slice(0, 5);
+      .slice(0, Math.max(0, 5 - buyPrimary.length));
+    const topBuy = [...buyPrimary, ...buyFallback];
+
+    const sellPrimary = rankedForSell.filter((row) => row.signal.signal === 'SELL').slice(0, 5);
+    const sellFallback = rankedForSell
+      .filter(
+        (row) =>
+          row.signal.signal !== 'SELL' &&
+          row.signal.sellScore > row.signal.buyScore &&
+          !sellPrimary.some((picked) => picked.symbol === row.symbol),
+      )
+      .slice(0, Math.max(0, 5 - sellPrimary.length));
+    const topSell = [...sellPrimary, ...sellFallback];
 
     const avoid = topUniverse
       .filter(
@@ -663,6 +714,68 @@ export function EdgeSuiteTerminalPage({ user }: { user: AuthUser | null }) {
       low: alerts.filter((item) => item.severity === 'LOW').length,
     };
   }, [alerts]);
+
+  const universeClassification = useMemo(() => {
+    const sectorDistribution = new Map<string, number>();
+    const unclassifiedSymbols: string[] = [];
+
+    for (const row of watchlist) {
+      const normalizedSector = row.sector?.trim() ?? '';
+      if (!normalizedSector) {
+        unclassifiedSymbols.push(row.symbol);
+        continue;
+      }
+
+      sectorDistribution.set(normalizedSector, (sectorDistribution.get(normalizedSector) ?? 0) + 1);
+    }
+
+    const classified = watchlist.length - unclassifiedSymbols.length;
+
+    return {
+      total: watchlist.length,
+      classified,
+      unclassified: unclassifiedSymbols.length,
+      coveragePct: watchlist.length > 0 ? (classified / watchlist.length) * 100 : 0,
+      topSectors: [...sectorDistribution.entries()]
+        .map(([sector, count]) => ({ sector, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 10),
+      unclassifiedSymbols: unclassifiedSymbols.slice(0, 20),
+    };
+  }, [watchlist]);
+
+  const signalCoverage = useMemo(() => {
+    const ranked = [...watchlist]
+      .sort((a, b) => (b.turnover ?? 0) - (a.turnover ?? 0))
+      .slice(0, SIGNAL_UNIVERSE_SIZE)
+      .map((row) => ({ row, signal: signalsBySymbol[row.symbol] }))
+      .filter(
+        (entry): entry is { row: WatchlistApiRow; signal: TradingSignalResponse } => Boolean(entry.signal),
+      );
+
+    const buyCount = ranked.filter((entry) => entry.signal.signal === 'BUY').length;
+    const sellCount = ranked.filter((entry) => entry.signal.signal === 'SELL').length;
+    const holdCount = ranked.filter((entry) => entry.signal.signal === 'HOLD').length;
+
+    const topConviction = [...ranked]
+      .sort(
+        (a, b) =>
+          b.signal.strength - a.signal.strength ||
+          Math.abs(b.signal.buyScore - b.signal.sellScore) -
+            Math.abs(a.signal.buyScore - a.signal.sellScore) ||
+          (b.row.turnover ?? 0) - (a.row.turnover ?? 0),
+      )
+      .slice(0, 8);
+
+    return {
+      coveredCount: ranked.length,
+      coveragePct: watchlist.length > 0 ? (ranked.length / watchlist.length) * 100 : 0,
+      buyCount,
+      sellCount,
+      holdCount,
+      topConviction,
+    };
+  }, [signalsBySymbol, watchlist]);
 
   return (
     <section className="space-y-6">
@@ -707,7 +820,113 @@ export function EdgeSuiteTerminalPage({ user }: { user: AuthUser | null }) {
         </article>
         <article className="terminal-card p-4">
           <p className="text-xs uppercase tracking-wide text-zinc-500">Tracked Universe</p>
-          <p className="mt-2 font-mono text-2xl font-bold text-white">{watchlist.length}</p>
+          <p className="mt-2 font-mono text-2xl font-bold text-white">{universeClassification.total}</p>
+          <p className="mt-1 text-xs text-zinc-500">
+            Classified {universeClassification.classified} | Unclassified {universeClassification.unclassified}
+          </p>
+        </article>
+      </section>
+
+      <section className="grid gap-5 xl:grid-cols-2">
+        <article className="terminal-card overflow-hidden">
+          <header className="border-b border-zinc-800 p-4">
+            <h2 className="text-base font-semibold text-white">Universe Classification Coverage</h2>
+            <p className="mt-1 text-xs text-zinc-500">Sector-classified companies and remaining symbols still awaiting profile metadata.</p>
+          </header>
+
+          <div className="space-y-4 p-4">
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+                <p className="text-xs uppercase tracking-wide text-zinc-500">Coverage</p>
+                <p className="mt-2 font-mono text-lg font-bold text-cyan-200">{formatPercent(universeClassification.coveragePct)}</p>
+              </div>
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+                <p className="text-xs uppercase tracking-wide text-zinc-500">Classified</p>
+                <p className="mt-2 font-mono text-lg font-bold text-terminal-green">{universeClassification.classified}</p>
+              </div>
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+                <p className="text-xs uppercase tracking-wide text-zinc-500">Unclassified</p>
+                <p className="mt-2 font-mono text-lg font-bold text-terminal-amber">{universeClassification.unclassified}</p>
+              </div>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+                <p className="text-xs uppercase tracking-wide text-zinc-500">Top Sector Distribution</p>
+                <ul className="mt-2 space-y-1 text-sm text-zinc-300">
+                  {universeClassification.topSectors.length ? (
+                    universeClassification.topSectors.map((sector) => (
+                      <li key={sector.sector} className="flex items-center justify-between gap-3">
+                        <span>{sector.sector}</span>
+                        <span className="font-mono text-zinc-100">{sector.count}</span>
+                      </li>
+                    ))
+                  ) : (
+                    <li className="text-zinc-500">No classified sector rows available yet.</li>
+                  )}
+                </ul>
+              </div>
+
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+                <p className="text-xs uppercase tracking-wide text-zinc-500">Unclassified Symbols</p>
+                {universeClassification.unclassifiedSymbols.length ? (
+                  <p className="mt-2 text-xs leading-relaxed text-zinc-400">
+                    {universeClassification.unclassifiedSymbols.join(', ')}
+                    {universeClassification.unclassified > universeClassification.unclassifiedSymbols.length ? ' ...' : ''}
+                  </p>
+                ) : (
+                  <p className="mt-2 text-sm text-terminal-green">All tracked symbols are sector-classified.</p>
+                )}
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article className="terminal-card overflow-hidden">
+          <header className="border-b border-zinc-800 p-4">
+            <h2 className="text-base font-semibold text-white">Signal Radar Coverage</h2>
+            <p className="mt-1 text-xs text-zinc-500">Merged suite snapshot of BUY, SELL, HOLD states with top conviction symbols.</p>
+          </header>
+
+          <div className="space-y-4 p-4">
+            <div className="grid gap-3 md:grid-cols-4">
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3 md:col-span-1">
+                <p className="text-xs uppercase tracking-wide text-zinc-500">Signal Coverage</p>
+                <p className="mt-2 font-mono text-lg font-bold text-cyan-200">{formatPercent(signalCoverage.coveragePct)}</p>
+                <p className="mt-1 text-xs text-zinc-500">{signalCoverage.coveredCount} / {watchlist.length}</p>
+              </div>
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+                <p className="text-xs uppercase tracking-wide text-zinc-500">BUY</p>
+                <p className="mt-2 font-mono text-lg font-bold text-terminal-green">{signalCoverage.buyCount}</p>
+              </div>
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+                <p className="text-xs uppercase tracking-wide text-zinc-500">SELL</p>
+                <p className="mt-2 font-mono text-lg font-bold text-terminal-red">{signalCoverage.sellCount}</p>
+              </div>
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+                <p className="text-xs uppercase tracking-wide text-zinc-500">HOLD</p>
+                <p className="mt-2 font-mono text-lg font-bold text-terminal-amber">{signalCoverage.holdCount}</p>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+              <p className="text-xs uppercase tracking-wide text-zinc-500">Top Conviction Signals</p>
+              <ul className="mt-2 space-y-1 text-sm text-zinc-300">
+                {signalCoverage.topConviction.length ? (
+                  signalCoverage.topConviction.map((entry) => (
+                    <li key={`conviction-${entry.row.symbol}`} className="flex items-center justify-between gap-3">
+                      <span className="font-mono text-zinc-100">{entry.row.symbol}</span>
+                      <span className="text-xs text-zinc-400">
+                        {entry.signal.signal} S{entry.signal.strength} ({entry.signal.buyScore}/{entry.signal.sellScore})
+                      </span>
+                    </li>
+                  ))
+                ) : (
+                  <li className="text-zinc-500">Signal engine is warming up. Refresh in a few seconds.</li>
+                )}
+              </ul>
+            </div>
+          </div>
         </article>
       </section>
 
@@ -777,7 +996,7 @@ export function EdgeSuiteTerminalPage({ user }: { user: AuthUser | null }) {
                       <li key={`buy-${row.symbol}`} className="flex items-center justify-between gap-3">
                         <span className="font-mono text-zinc-100">{row.symbol}</span>
                         <span className="text-xs text-zinc-400">
-                          S{row.signal?.strength ?? 0} | T ₹ {formatMoney(row.turnover ?? 0)}
+                          {row.signal?.signal ?? 'HOLD'} S{row.signal?.strength ?? 0} | T ₹ {formatMoney(row.turnover ?? 0)}
                         </span>
                       </li>
                     ))
@@ -795,7 +1014,7 @@ export function EdgeSuiteTerminalPage({ user }: { user: AuthUser | null }) {
                       <li key={`sell-${row.symbol}`} className="flex items-center justify-between gap-3">
                         <span className="font-mono text-zinc-100">{row.symbol}</span>
                         <span className="text-xs text-zinc-400">
-                          S{row.signal?.strength ?? 0} | T ₹ {formatMoney(row.turnover ?? 0)}
+                          {row.signal?.signal ?? 'HOLD'} S{row.signal?.strength ?? 0} | T ₹ {formatMoney(row.turnover ?? 0)}
                         </span>
                       </li>
                     ))

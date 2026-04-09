@@ -15,8 +15,8 @@ const SYMBOL_PROFILE_URL = 'https://www.sharesansar.com/company-list';
 const SECTORWISE_PROFILE_URL = 'https://www.sharesansar.com/sectorwise-share-price';
 const COMPANY_PROFILE_URL_PREFIX = 'https://www.sharesansar.com/company/';
 const SYMBOL_PROFILE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
-const DETAIL_SECTOR_BACKFILL_LIMIT_PER_CYCLE = 8;
-const DETAIL_SECTOR_BACKFILL_CONCURRENCY = 2;
+const DETAIL_SECTOR_BACKFILL_LIMIT_PER_CYCLE = 120;
+const DETAIL_SECTOR_BACKFILL_CONCURRENCY = 10;
 const MARKET_STATUS_CACHE_TTL_MS = 45 * 1000;
 
 const SCRAPE_HTTP_HEADERS = {
@@ -768,8 +768,8 @@ export class NepseScrapeService {
     const companyIdx = this.resolveHeaderIndex(headers, ['company', 'name']);
     const sectorIdx = this.resolveHeaderIndex(headers, ['sector']);
     const ltpIdx = this.resolveHeaderIndex(headers, ['ltp', 'lasttradedprice']);
-    const changeIdx = this.resolveHeaderIndex(headers, ['change']);
-    const changePctIdx = this.resolveHeaderIndex(headers, ['change%', 'changepercent', '%change']);
+    const changePctIdx = this.resolveChangePercentHeaderIndex(headers);
+    const changeIdx = this.resolvePointChangeHeaderIndex(headers, changePctIdx);
     const openIdx = this.resolveHeaderIndex(headers, ['open']);
     const highIdx = this.resolveHeaderIndex(headers, ['high']);
     const lowIdx = this.resolveHeaderIndex(headers, ['low']);
@@ -802,6 +802,45 @@ export class NepseScrapeService {
     }
 
     return parsed;
+  }
+
+  private resolveChangePercentHeaderIndex(headers: string[]): number {
+    const direct = headers.findIndex((header) => {
+      const lower = header.toLowerCase();
+      return (
+        (lower.includes('change') && (lower.includes('%') || lower.includes('percent'))) ||
+        /close\s*-\s*ltp\s*%/.test(lower) ||
+        /%\s*change/.test(lower)
+      );
+    });
+
+    if (direct >= 0) {
+      return direct;
+    }
+
+    return this.resolveHeaderIndex(headers, ['changepercent', 'percentchange']);
+  }
+
+  private resolvePointChangeHeaderIndex(headers: string[], changePctIdx: number): number {
+    const direct = headers.findIndex((header, index) => {
+      if (index === changePctIdx) return false;
+
+      const lower = header.toLowerCase();
+      if (lower.includes('%') || lower.includes('percent')) return false;
+
+      return (
+        /point\s*change/.test(lower) ||
+        /pts?\.?\s*change/.test(lower) ||
+        /close\s*-\s*ltp\b/.test(lower) ||
+        /\bchange\b/.test(lower)
+      );
+    });
+
+    if (direct >= 0) {
+      return direct;
+    }
+
+    return this.resolveHeaderIndex(headers, ['change']);
   }
 
   private findLargestMatchingTable(

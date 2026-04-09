@@ -6,7 +6,6 @@ import { ChartDeskTerminalPage } from './components/terminal/ChartDeskTerminalPa
 import { EdgeSuiteTerminalPage } from './components/terminal/EdgeSuiteTerminalPage';
 import { LiveMarketTerminalPage } from './components/terminal/LiveMarketTerminalPage';
 import { PortfolioTerminalPage } from './components/terminal/PortfolioTerminalPage';
-import { SignalDashboardTerminalPage } from './components/terminal/SignalDashboardTerminalPage';
 import { TradeJournalTerminalPage } from './components/terminal/TradeJournalTerminalPage';
 import { fetchMarketStatus, fetchMe } from './lib/api';
 import { clearAuthSession, getAuthToken, getStoredUser, setAuthSession } from './lib/auth';
@@ -21,8 +20,7 @@ interface NavItem {
 const PUBLIC_NAV = [
   { to: '/', label: 'Execution', end: true },
   { to: '/live-market', label: 'Market' },
-  { to: '/signal-dashboard', label: 'Signals' },
-  { to: '/edge-suite', label: 'Trader Suite' },
+  { to: '/edge-suite', label: 'Trade + Signal Suite' },
 ] as NavItem[];
 
 const PRIVATE_NAV = [
@@ -163,11 +161,16 @@ export default function App() {
       <div className="pointer-events-none fixed -left-24 top-48 -z-10 h-72 w-72 rounded-full bg-cyan-400/10 blur-3xl" />
       <div className="pointer-events-none fixed -right-20 bottom-24 -z-10 h-72 w-72 rounded-full bg-orange-400/10 blur-3xl" />
 
-      <header className="fixed inset-x-0 top-0 z-50 border-b border-cyan-900/35 bg-[linear-gradient(90deg,rgba(4,10,14,0.96),rgba(8,20,30,0.92),rgba(8,13,20,0.96))] px-4 py-3 backdrop-blur-xl">
+      <header className="fixed inset-x-0 top-0 z-50 border-b border-cyan-900/35 bg-[linear-gradient(90deg,rgba(4,10,14,0.97),rgba(8,20,30,0.95),rgba(8,13,20,0.97))] px-4 py-3 shadow-[0_8px_30px_rgba(0,0,0,0.35)] backdrop-blur-xl">
         <div className="mx-auto flex max-w-[1800px] items-center gap-4">
-          <div className="min-w-[160px] sm:min-w-[220px] lg:w-[20%] lg:min-w-[220px]">
-            <p className="text-[10px] uppercase tracking-[0.35em] text-cyan-200/75">NEPSE EXECUTION DESK</p>
-            <p className="mt-1 text-sm font-semibold text-zinc-100">Institutional Trader Workspace</p>
+          <div className="flex min-w-[190px] items-center gap-3 sm:min-w-[250px] lg:w-[20%] lg:min-w-[250px]">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-cyan-400/40 bg-cyan-500/15 font-mono text-sm font-bold text-cyan-100">
+              NX
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.34em] text-cyan-200/75">NEPSE EXECUTION DESK</p>
+              <p className="mt-1 text-sm font-semibold text-zinc-100">Professional Trading Terminal</p>
+            </div>
           </div>
 
           <nav className="flex flex-1 items-center gap-2 overflow-x-auto lg:hidden">
@@ -179,7 +182,7 @@ export default function App() {
                 className={({ isActive }) =>
                   isActive
                     ? 'rounded-lg border border-cyan-300/70 bg-cyan-500/15 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-cyan-100'
-                    : 'rounded-lg border border-zinc-700/80 bg-zinc-900/75 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-300 hover:border-cyan-500/60'
+                      : 'rounded-lg border border-zinc-700/80 bg-zinc-900/75 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-300 transition hover:border-cyan-500/60 hover:text-cyan-100'
                 }
               >
                 {item.label}
@@ -292,7 +295,7 @@ export default function App() {
           <p className="mt-3 text-sm text-zinc-300 leading-relaxed">
             {user
               ? 'Authenticated mode: portfolio risk controls, chart lab, journal analytics, and trader suite are unlocked.'
-              : 'Guest mode: execution tools, live market, signal dashboard, and trader suite are available.'}
+              : 'Guest mode: execution tools, live market, and the Trade + Signal Suite are available.'}
           </p>
         </div>
 
@@ -310,8 +313,8 @@ export default function App() {
             <Routes>
               <Route path="/" element={<CalculatorTerminalPage />} />
               <Route path="/live-market" element={<LiveMarketTerminalPage />} />
-              <Route path="/signal-dashboard" element={<SignalDashboardTerminalPage />} />
               <Route path="/edge-suite" element={<EdgeSuiteTerminalPage user={user} />} />
+              <Route path="/signal-dashboard" element={<Navigate to="/edge-suite" replace />} />
               <Route
                 path="/chart-desk"
                 element={
@@ -381,8 +384,27 @@ export default function App() {
             </Routes>
           )}
 
-          <footer className="mt-8 border-t border-cyan-900/30 pt-4 text-center text-xs uppercase tracking-[0.2em] text-zinc-500">
-            Developed by InfoShare Company | Built for disciplined traders
+          <footer className="mt-10 border-t border-cyan-900/35 pt-5">
+            <div className="grid gap-4 rounded-2xl border border-zinc-800/80 bg-zinc-950/60 p-5 md:grid-cols-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-cyan-300">InfoShare Terminal</p>
+                <p className="mt-2 text-sm text-zinc-300">
+                  Institutional-grade execution workspace for live market monitoring, signal analysis, and risk-managed planning.
+                </p>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Platform Modules</p>
+                <p className="mt-2 text-sm text-zinc-300">Execution, Market, Trade + Signal Suite, Chart Lab, Portfolio, Journal</p>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Data Session</p>
+                <p className="mt-2 text-sm text-zinc-300">Market: {marketStatus.label} • Source: {marketStatus.source}</p>
+                <p className="text-xs text-zinc-500">{marketStatus.asOf ? `As of ${marketStatus.asOf}` : 'Awaiting source timestamp'}</p>
+              </div>
+            </div>
+            <p className="mt-4 text-center text-xs uppercase tracking-[0.2em] text-zinc-500">
+              Developed by InfoShare Company • Built for disciplined traders
+            </p>
           </footer>
         </div>
       </main>

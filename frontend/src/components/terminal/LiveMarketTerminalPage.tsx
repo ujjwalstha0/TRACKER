@@ -25,6 +25,12 @@ function formatSignedPercent(value: number | null): string {
   return `${sign}${formatNumber(value)}%`;
 }
 
+function formatSignedNumber(value: number | null): string {
+  if (value === null) return '--';
+  const sign = value > 0 ? '+' : '';
+  return `${sign}${formatNumber(value)}`;
+}
+
 export function LiveMarketTerminalPage() {
   const navigate = useNavigate();
 
@@ -233,7 +239,7 @@ export function LiveMarketTerminalPage() {
                 <th className="px-4 py-3 text-left">Symbol</th>
                 <th className="px-4 py-3 text-left">Company</th>
                 <th className="px-4 py-3 text-right">LTP</th>
-                <th className="px-4 py-3 text-right">Change %</th>
+                <th className="px-4 py-3 text-right">Change (Pts / %)</th>
                 <th className="px-4 py-3 text-center">Signal</th>
                 <th className="px-4 py-3 text-right">Volume</th>
                 <th className="px-4 py-3 text-right">Turnover</th>
@@ -251,14 +257,19 @@ export function LiveMarketTerminalPage() {
                       <td className="px-4 py-3 font-mono font-semibold text-white">{row.symbol}</td>
                       <td className="px-4 py-3 text-zinc-300">{row.company ?? 'Profile syncing...'}</td>
                       <td className="px-4 py-3 text-right font-mono text-zinc-200">{formatNumber(row.ltp)}</td>
-                      <td className={
-                        !hasChange
-                          ? 'px-4 py-3 text-right font-mono text-zinc-500'
-                          : up
-                            ? 'px-4 py-3 text-right font-mono text-terminal-green'
-                            : 'px-4 py-3 text-right font-mono text-terminal-red'
-                      }>
-                        {formatSignedPercent(row.change_pct)}
+                      <td
+                        className={
+                          !hasChange && row.change === null
+                            ? 'px-4 py-3 text-right font-mono text-zinc-500'
+                            : up
+                              ? 'px-4 py-3 text-right font-mono text-terminal-green'
+                              : 'px-4 py-3 text-right font-mono text-terminal-red'
+                        }
+                      >
+                        <div className="flex flex-col items-end gap-0.5 leading-tight">
+                          <span>{formatSignedNumber(row.change)}</span>
+                          <span className="text-[11px] opacity-90">{formatSignedPercent(row.change_pct)}</span>
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-center">
                         {signal ? (
@@ -276,7 +287,7 @@ export function LiveMarketTerminalPage() {
                       </td>
                       <td className="px-4 py-3 text-right font-mono text-zinc-300">{row.volume === null ? '--' : formatNumber(row.volume, 0)}</td>
                       <td className="px-4 py-3 text-right font-mono text-zinc-300">{row.turnover === null ? '--' : formatNumber(row.turnover)}</td>
-                      <td className="px-4 py-3 text-zinc-400">{row.sector ?? 'Sector pending'}</td>
+                      <td className="px-4 py-3 text-zinc-400">{row.sector ?? 'Unclassified'}</td>
                     </tr>
                   );
                 })
