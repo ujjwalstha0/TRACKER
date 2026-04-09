@@ -1,10 +1,14 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
+  * {
+    box-sizing: border-box;
+  }
+
   html,
   body,
   #root {
@@ -13,27 +17,70 @@
 
   body {
     @apply bg-terminal-bg text-terminal-text font-sans antialiased;
+    background-image:
+      radial-gradient(circle at 14% 8%, rgba(34, 211, 238, 0.14), transparent 33%),
+      radial-gradient(circle at 88% 4%, rgba(245, 158, 11, 0.12), transparent 34%),
+      linear-gradient(145deg, #060b10 0%, #0b1623 45%, #060b10 100%);
+    background-attachment: fixed;
+  }
+
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.02em;
+  }
+
+  @keyframes app-rise {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes pulse-grid {
+    0%,
+    100% {
+      opacity: 0.25;
+    }
+
+    50% {
+      opacity: 0.45;
+    }
   }
 }
 
 @layer components {
   .terminal-card {
-    @apply rounded-xl border border-terminal-border bg-terminal-panel shadow-terminal;
+    @apply rounded-2xl border border-terminal-border/80 bg-terminal-panel/85 shadow-terminal backdrop-blur;
+    animation: app-rise 0.35s ease both;
   }
 
   .terminal-pill {
-    @apply rounded-md border border-terminal-border bg-terminal-panelSoft px-3 py-1 text-xs font-medium text-terminal-muted;
+    @apply rounded-md border border-terminal-border/90 bg-terminal-panelSoft/70 px-3 py-1 text-xs font-medium text-terminal-muted;
   }
 
   .terminal-input {
-    @apply w-full rounded-lg border border-terminal-border bg-black/60 px-3 py-2 text-sm text-terminal-text outline-none transition focus:border-terminal-amber;
+    @apply w-full rounded-lg border border-terminal-border/90 bg-[#0b121c]/90 px-3 py-2 text-sm text-terminal-text outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20;
   }
 
   .terminal-btn {
-    @apply rounded-lg border border-terminal-border bg-terminal-panelSoft px-3 py-2 text-sm font-semibold text-white transition hover:border-terminal-amber;
+    @apply rounded-lg border border-terminal-border/90 bg-terminal-panelSoft/80 px-3 py-2 text-sm font-semibold text-white transition hover:border-cyan-400/80 hover:bg-cyan-500/10;
   }
 
   .terminal-btn-primary {
-    @apply rounded-lg border border-terminal-amber bg-terminal-amber/20 px-4 py-2 text-sm font-semibold text-white transition hover:bg-terminal-amber/30;
+    @apply rounded-lg border border-cyan-300/70 bg-cyan-500/20 px-4 py-2 text-sm font-semibold text-cyan-50 transition hover:bg-cyan-500/30;
+  }
+
+  .terminal-grid-pattern {
+    background-image:
+      linear-gradient(rgba(85, 118, 146, 0.14) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(85, 118, 146, 0.14) 1px, transparent 1px);
+    background-size: 24px 24px;
+    animation: pulse-grid 7s ease-in-out infinite;
   }
 }
