@@ -36,6 +36,8 @@ export function ChartDeskTerminalPage() {
   const [showVwap, setShowVwap] = useState(false);
   const [payload, setPayload] = useState<IndicatorsResponse | null>(null);
   const [signal, setSignal] = useState<TradingSignalResponse | null>(null);
+  const [activeDataInterval, setActiveDataInterval] = useState<Interval>('15m');
+  const [historyHint, setHistoryHint] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -69,11 +71,44 @@ export function ChartDeskTerminalPage() {
     setLoading(true);
 
     try {
-      const response = await fetchIndicators(selectedSymbol, interval, 320);
-      setPayload(response);
+      const requested = await fetchIndicators(selectedSymbol, interval, 320);
+      let best = requested;
+      let bestInterval: Interval = interval;
+      let hint = '';
+
+      if (requested.candles.length < 50) {
+        const fallbackOrder = INTERVALS.filter((item) => item !== interval);
+        for (const candidate of fallbackOrder) {
+          const candidateLimit = candidate === '1m' ? 1000 : 400;
+          const candidateResponse = await fetchIndicators(selectedSymbol, candidate, candidateLimit);
+
+          if (candidateResponse.candles.length > best.candles.length) {
+            best = candidateResponse;
+            bestInterval = candidate;
+          }
+
+          if (best.candles.length >= 90) {
+            break;
+          }
+        }
+
+        if (best.candles.length === 0) {
+          hint = 'No historical candles available yet. Wait for data collection to continue.';
+        } else if (bestInterval !== interval) {
+          hint = `Limited ${interval} history. Showing ${bestInterval} data (${best.candles.length} candles).`;
+        } else if (best.candles.length < 40) {
+          hint = `History is still warming up (${best.candles.length} candles). Signals may stay HOLD until more data arrives.`;
+        }
+      }
+
+      setPayload(best);
+      setActiveDataInterval(bestInterval);
+      setHistoryHint(hint);
       setError('');
     } catch (requestError) {
       setPayload(null);
+      setActiveDataInterval(interval);
+      setHistoryHint('');
       setError(requestError instanceof Error ? requestError.message : 'Unable to load chart feed.');
     } finally {
       setLoading(false);
@@ -303,6 +338,10 @@ export function ChartDeskTerminalPage() {
   }, []);
 
   const lastCandle = payload?.candles[payload.candles.length - 1] ?? null;
+  const selectedMeta = useMemo(
+    () => watchlist.find((row) => row.symbol === selectedSymbol) ?? null,
+    [selectedSymbol, watchlist],
+  );
 
   const changeSymbol = (symbol: string) => {
     setSelectedSymbol(symbol);
@@ -342,6 +381,14 @@ export function ChartDeskTerminalPage() {
       </section>
 
       <section className="terminal-card space-y-4 p-5">
+        <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-xs text-zinc-400">
+          <span className="font-mono text-zinc-200">{selectedSymbol || '-'}</span>
+          <span className="mx-2 text-zinc-600">|</span>
+          <span>{selectedMeta?.company ?? 'Company profile syncing...'}</span>
+          <span className="mx-2 text-zinc-600">|</span>
+          <span>{selectedMeta?.sector ?? 'Sector pending'}</span>
+        </div>
+
         <div className="grid gap-3 xl:grid-cols-[1.8fr_0.7fr_0.6fr]">
           <div className="space-y-1">
             <label htmlFor="symbol" className="text-xs uppercase tracking-wide text-zinc-400">
@@ -376,7 +423,9 @@ export function ChartDeskTerminalPage() {
 
           <div className="space-y-1">
             <label className="text-xs uppercase tracking-wide text-zinc-400">View</label>
-            <div className="terminal-input flex items-center justify-between text-zinc-300">Candles</div>
+            <div className="terminal-input flex items-center justify-between text-zinc-300">
+              Candles ({activeDataInterval})
+            </div>
           </div>
         </div>
 
@@ -403,6 +452,7 @@ export function ChartDeskTerminalPage() {
         </div>
 
         {error ? <p className="text-sm font-medium text-terminal-red">{error}</p> : null}
+        {historyHint ? <p className="text-xs text-terminal-amber">{historyHint}</p> : null}
       </section>
 
       <section className="terminal-card p-4">

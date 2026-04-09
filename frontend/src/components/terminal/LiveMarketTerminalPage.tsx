@@ -64,7 +64,7 @@ export function LiveMarketTerminalPage() {
   }, [loadData]);
 
   const focusIndices = useMemo(() => {
-    const names = ['NEPSE Index', 'Banking SubIndex', 'HydroPower Index', 'Mutual Fund'];
+    const names = ['NEPSE Index', 'Sensitive Index', 'Sensitive Float Index', 'HydroPower Index'];
     const matched = names
       .map((name) => indices.find((row) => row.indexName === name))
       .filter((row): row is IndexApiRow => Boolean(row));
@@ -75,6 +75,16 @@ export function LiveMarketTerminalPage() {
 
     const extras = indices.filter((row) => !matched.some((picked) => picked.indexName === row.indexName)).slice(0, 4 - matched.length);
     return [...matched, ...extras];
+  }, [indices]);
+
+  const groupedIndices = useMemo(() => {
+    const sorted = [...indices].sort((a, b) => a.indexName.localeCompare(b.indexName));
+    const broad = sorted.filter((row) => {
+      const name = row.indexName.toLowerCase();
+      return name.includes('nepse') || name.includes('sensitive') || name.includes('float');
+    });
+    const sectoral = sorted.filter((row) => !broad.some((item) => item.indexName === row.indexName));
+    return { broad, sectoral };
   }, [indices]);
 
   const filteredRows = useMemo(() => {
@@ -239,7 +249,7 @@ export function LiveMarketTerminalPage() {
                   return (
                     <tr key={row.symbol} className="cursor-pointer hover:bg-zinc-900/80" onClick={() => navigate(`/chart-desk/${row.symbol}`)}>
                       <td className="px-4 py-3 font-mono font-semibold text-white">{row.symbol}</td>
-                      <td className="px-4 py-3 text-zinc-300">{row.company ?? 'Unknown company'}</td>
+                      <td className="px-4 py-3 text-zinc-300">{row.company ?? 'Profile syncing...'}</td>
                       <td className="px-4 py-3 text-right font-mono text-zinc-200">{formatNumber(row.ltp)}</td>
                       <td className={
                         !hasChange
@@ -266,7 +276,7 @@ export function LiveMarketTerminalPage() {
                       </td>
                       <td className="px-4 py-3 text-right font-mono text-zinc-300">{row.volume === null ? '--' : formatNumber(row.volume, 0)}</td>
                       <td className="px-4 py-3 text-right font-mono text-zinc-300">{row.turnover === null ? '--' : formatNumber(row.turnover)}</td>
-                      <td className="px-4 py-3 text-zinc-400">{row.sector ?? 'Unspecified'}</td>
+                      <td className="px-4 py-3 text-zinc-400">{row.sector ?? 'Sector pending'}</td>
                     </tr>
                   );
                 })
@@ -306,6 +316,90 @@ export function LiveMarketTerminalPage() {
         <p className="border-t border-zinc-900 px-4 py-3 text-xs text-zinc-500">
           Signals for analysis only. Not financial advice. Past performance ≠ future results.
         </p>
+      </section>
+
+      <section className="grid gap-4 xl:grid-cols-2">
+        <article className="terminal-card overflow-hidden">
+          <header className="border-b border-zinc-800 px-4 py-3">
+            <h2 className="text-base font-semibold text-white">Core Indices</h2>
+            <p className="text-xs text-zinc-500">NEPSE, sensitive, and float-sensitive index coverage.</p>
+          </header>
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-zinc-800 text-sm">
+              <thead className="bg-black/40 text-xs uppercase tracking-wide text-zinc-500">
+                <tr>
+                  <th className="px-4 py-3 text-left">Index</th>
+                  <th className="px-4 py-3 text-right">Value</th>
+                  <th className="px-4 py-3 text-right">Change %</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-900/80">
+                {groupedIndices.broad.length ? (
+                  groupedIndices.broad.map((row) => (
+                    <tr key={`broad-${row.indexName}`}>
+                      <td className="px-4 py-3 text-zinc-300">{row.indexName}</td>
+                      <td className="px-4 py-3 text-right font-mono text-zinc-200">{formatNumber(row.value)}</td>
+                      <td className={
+                        row.change_pct >= 0
+                          ? 'px-4 py-3 text-right font-mono text-terminal-green'
+                          : 'px-4 py-3 text-right font-mono text-terminal-red'
+                      }>
+                        {formatSignedPercent(row.change_pct)}
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={3} className="px-4 py-6 text-center text-zinc-500">
+                      Core index feed not available yet.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <article className="terminal-card overflow-hidden">
+          <header className="border-b border-zinc-800 px-4 py-3">
+            <h2 className="text-base font-semibold text-white">Sector-Wise Indices</h2>
+            <p className="text-xs text-zinc-500">Banking, hydro, insurance, tourism, manufacturing, and more.</p>
+          </header>
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-zinc-800 text-sm">
+              <thead className="bg-black/40 text-xs uppercase tracking-wide text-zinc-500">
+                <tr>
+                  <th className="px-4 py-3 text-left">Index</th>
+                  <th className="px-4 py-3 text-right">Value</th>
+                  <th className="px-4 py-3 text-right">Change %</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-900/80">
+                {groupedIndices.sectoral.length ? (
+                  groupedIndices.sectoral.map((row) => (
+                    <tr key={`sector-${row.indexName}`}>
+                      <td className="px-4 py-3 text-zinc-300">{row.indexName}</td>
+                      <td className="px-4 py-3 text-right font-mono text-zinc-200">{formatNumber(row.value)}</td>
+                      <td className={
+                        row.change_pct >= 0
+                          ? 'px-4 py-3 text-right font-mono text-terminal-green'
+                          : 'px-4 py-3 text-right font-mono text-terminal-red'
+                      }>
+                        {formatSignedPercent(row.change_pct)}
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={3} className="px-4 py-6 text-center text-zinc-500">
+                      Sector index feed not available yet.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </article>
       </section>
     </section>
   );

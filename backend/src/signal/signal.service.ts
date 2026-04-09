@@ -101,80 +101,108 @@ export class SignalService {
   private calculateTradingSignal(data: SignalInputData, prevData?: SignalInputData): TradingSignalResult {
     let buyScore = 0;
     let sellScore = 0;
-    const reasons: string[] = [];
+    const buyReasons: string[] = [];
+    const sellReasons: string[] = [];
     const hasValidBands =
       Number.isFinite(data.bbLower) && Number.isFinite(data.bbUpper) && data.bbUpper > data.bbLower;
 
     if (data.ema8 > data.ema21 && (prevData ? prevData.ema8 <= prevData.ema21 : false)) {
       buyScore += 3;
-      reasons.push('EMA8 crossed ABOVE EMA21');
+      buyReasons.push('EMA8 crossed ABOVE EMA21');
     }
 
     if (data.ema20 > data.ema50) {
       buyScore += 1;
-      reasons.push('EMA20 > EMA50 (uptrend)');
+      buyReasons.push('EMA20 > EMA50 (uptrend)');
     }
 
     if (data.rsi14 < 65 && data.rsi14 > 30) {
       buyScore += 1;
-      reasons.push('RSI neutral-bullish');
+      buyReasons.push('RSI neutral-bullish');
     }
 
     if (data.close > data.vwap) {
       buyScore += 1;
-      reasons.push('Price > VWAP');
+      buyReasons.push('Price > VWAP');
     }
 
     if (data.avgVolume20 > 0 && data.volume > data.avgVolume20 * 1.5) {
       buyScore += 1;
-      reasons.push('High volume');
+      buyReasons.push('High volume');
     }
 
     if (hasValidBands) {
       if (data.close <= data.bbLower) {
         buyScore += 2;
-        reasons.push('Oversold bounce');
+        buyReasons.push('Oversold bounce');
       } else if (data.close >= data.bbUpper) {
         sellScore += 2;
-        reasons.push('Overbought rejection');
+        sellReasons.push('Overbought rejection');
       }
     }
 
     if (data.ema8 < data.ema21 && (prevData ? prevData.ema8 >= prevData.ema21 : false)) {
       sellScore += 3;
-      reasons.push('EMA8 crossed BELOW EMA21');
+      sellReasons.push('EMA8 crossed BELOW EMA21');
     }
 
     if (data.ema20 < data.ema50) {
       sellScore += 1;
-      reasons.push('EMA20 < EMA50 (downtrend)');
+      sellReasons.push('EMA20 < EMA50 (downtrend)');
     }
 
     if (data.rsi14 > 35 && data.rsi14 < 75) {
       sellScore += 1;
-      reasons.push('RSI neutral-bearish');
+      sellReasons.push('RSI neutral-bearish');
     }
 
     if (data.close < data.vwap) {
       sellScore += 1;
-      reasons.push('Price < VWAP');
+      sellReasons.push('Price < VWAP');
     }
 
     if (data.avgVolume20 > 0 && data.volume > data.avgVolume20 * 1.5) {
       sellScore += 1;
-      reasons.push('High volume');
+      sellReasons.push('High volume');
     }
 
-    const signal: TradingSignalKind =
-      buyScore > sellScore ? 'BUY' : sellScore > buyScore ? 'SELL' : 'HOLD';
+    const hasBuyConfluence =
+      data.ema8 > data.ema21 &&
+      data.ema20 > data.ema50 &&
+      data.close > data.vwap &&
+      data.rsi14 >= 40 &&
+      data.rsi14 <= 65;
+
+    const hasSellConfluence =
+      data.ema8 < data.ema21 &&
+      data.ema20 < data.ema50 &&
+      data.close < data.vwap &&
+      data.rsi14 >= 35 &&
+      data.rsi14 <= 60;
+
+    const isStrongBuy =
+      hasBuyConfluence && buyScore >= TRADING_SIGNALS.BUY_HIGH && buyScore >= sellScore + 2;
+    const isStrongSell =
+      hasSellConfluence && sellScore >= TRADING_SIGNALS.SELL_HIGH && sellScore >= buyScore + 2;
+
+    const signal: TradingSignalKind = isStrongBuy ? 'BUY' : isStrongSell ? 'SELL' : 'HOLD';
 
     const strength = buyScore > sellScore ? buyScore : sellScore;
     const confidence =
-      strength >= TRADING_SIGNALS.BUY_HIGH
-        ? 'HIGH'
-        : strength >= TRADING_SIGNALS.BUY_MEDIUM
-          ? 'MEDIUM'
-          : 'LOW';
+      signal === 'HOLD'
+        ? 'LOW'
+        : strength >= TRADING_SIGNALS.BUY_HIGH
+          ? 'HIGH'
+          : strength >= TRADING_SIGNALS.BUY_MEDIUM
+            ? 'MEDIUM'
+            : 'LOW';
+
+    const reasons =
+      signal === 'BUY'
+        ? buyReasons
+        : signal === 'SELL'
+          ? sellReasons
+          : ['All confirmation conditions are not aligned yet.'];
 
     return {
       signal,

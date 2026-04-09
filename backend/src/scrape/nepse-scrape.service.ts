@@ -13,9 +13,51 @@ const FALLBACK_LIVE_TRADING_URL = 'https://www.sharesansar.com/live-trading';
 const SYMBOL_PROFILE_URL = 'https://www.sharesansar.com/company-list';
 const SYMBOL_PROFILE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
+const SCRAPE_HTTP_HEADERS = {
+  'User-Agent':
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+  Accept:
+    'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+};
+
+const INDEX_NAME_ALIASES: Array<{ pattern: RegExp; canonical: string }> = [
+  { pattern: /^nepseindex$/i, canonical: 'NEPSE Index' },
+  { pattern: /^bankingsubindex$/i, canonical: 'Banking SubIndex' },
+  { pattern: /^developmentbankind/i, canonical: 'Development Bank Index' },
+  { pattern: /^financeindex$/i, canonical: 'Finance Index' },
+  { pattern: /^floatindex$/i, canonical: 'Float Index' },
+  { pattern: /^sensitiveindex$/i, canonical: 'Sensitive Index' },
+  { pattern: /^sensitivefloatind/i, canonical: 'Sensitive Float Index' },
+  { pattern: /^hotelsandtourism/i, canonical: 'Hotels And Tourism' },
+  { pattern: /^hydropowerindex$/i, canonical: 'HydroPower Index' },
+  { pattern: /^investment$/i, canonical: 'Investment' },
+  { pattern: /^lifeinsurance$/i, canonical: 'Life Insurance' },
+  { pattern: /^manufacturingandpr/i, canonical: 'Manufacturing And Processing' },
+  { pattern: /^microfinanceindex$/i, canonical: 'Microfinance Index' },
+  { pattern: /^mutualfund$/i, canonical: 'Mutual Fund' },
+  { pattern: /^nonlifeinsurance$/i, canonical: 'Non Life Insurance' },
+  { pattern: /^othersindex$/i, canonical: 'Others Index' },
+  { pattern: /^tradingindex$/i, canonical: 'Trading Index' },
+];
+
 interface SymbolProfile {
   company: string | null;
   sector: string | null;
+}
+
+interface NormalizedPriceRow {
+  symbol: string;
+  company: string | null;
+  sector: string | null;
+  ltp: number;
+  change: number | null;
+  changePct: number | null;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  volume: bigint | null;
+  turnover: number | null;
 }
 
 @Injectable()
@@ -72,50 +114,56 @@ export class NepseScrapeService {
     const symbolProfiles = await this.getSymbolProfiles();
 
     for (const row of prices) {
-      const profile = symbolProfiles.get(row.symbol);
-      const company = row.company ?? profile?.company ?? null;
-      const sector = row.sector ?? profile?.sector ?? null;
+      const normalizedRow = this.sanitizePriceRow(row);
+      if (normalizedRow.ltp <= 0) {
+        this.logger.warn(`Skipping symbol ${row.symbol} due to invalid LTP.`);
+        continue;
+      }
+
+      const profile = symbolProfiles.get(normalizedRow.symbol);
+      const company = normalizedRow.company ?? profile?.company ?? null;
+      const sector = normalizedRow.sector ?? profile?.sector ?? null;
 
       await this.prisma.price.upsert({
-        where: { symbol: row.symbol },
+        where: { symbol: normalizedRow.symbol },
         update: {
           // Keep previously known metadata/stats when the upstream feed omits them.
           company: company ?? undefined,
           sector: sector ?? undefined,
-          ltp: row.ltp,
-          change: row.change ?? undefined,
-          changePct: row.changePct ?? undefined,
-          open: row.open ?? undefined,
-          high: row.high ?? undefined,
-          low: row.low ?? undefined,
-          volume: row.volume ?? undefined,
-          turnover: row.turnover ?? undefined,
+          ltp: normalizedRow.ltp,
+          change: normalizedRow.change ?? undefined,
+          changePct: normalizedRow.changePct ?? undefined,
+          open: normalizedRow.open ?? undefined,
+          high: normalizedRow.high ?? undefined,
+          low: normalizedRow.low ?? undefined,
+          volume: normalizedRow.volume ?? undefined,
+          turnover: normalizedRow.turnover ?? undefined,
           savedAt,
         },
         create: {
-          symbol: row.symbol,
+          symbol: normalizedRow.symbol,
           company,
           sector,
-          ltp: row.ltp,
-          change: row.change,
-          changePct: row.changePct,
-          open: row.open,
-          high: row.high,
-          low: row.low,
-          volume: row.volume,
-          turnover: row.turnover,
+          ltp: normalizedRow.ltp,
+          change: normalizedRow.change,
+          changePct: normalizedRow.changePct,
+          open: normalizedRow.open,
+          high: normalizedRow.high,
+          low: normalizedRow.low,
+          volume: normalizedRow.volume,
+          turnover: normalizedRow.turnover,
         },
       });
 
-      const open = row.open ?? row.ltp;
-      const high = row.high ?? row.ltp;
-      const low = row.low ?? row.ltp;
-      const close = row.ltp;
+      const open = normalizedRow.open ?? normalizedRow.ltp;
+      const high = normalizedRow.high ?? normalizedRow.ltp;
+      const low = normalizedRow.low ?? normalizedRow.ltp;
+      const close = normalizedRow.ltp;
 
       await this.prisma.priceCandle.upsert({
         where: {
           symbol_t: {
-            symbol: row.symbol,
+            symbol: normalizedRow.symbol,
             t: savedAt,
           },
         },
@@ -124,19 +172,59 @@ export class NepseScrapeService {
           h: high,
           l: low,
           c: close,
-          v: row.volume,
+          v: normalizedRow.volume,
         },
         create: {
-          symbol: row.symbol,
+          symbol: normalizedRow.symbol,
           t: savedAt,
           o: open,
           h: high,
           l: low,
           c: close,
-          v: row.volume,
+          v: normalizedRow.volume,
         },
       });
     }
+  }
+
+  private sanitizePriceRow(row: PriceDto): NormalizedPriceRow {
+    const symbol = row.symbol.trim().toUpperCase();
+    const ltp = this.round4(Math.max(row.ltp, 0));
+
+    const open = row.open === null ? null : this.round4(Math.max(row.open, 0));
+    const high = row.high === null ? null : this.round4(Math.max(row.high, 0));
+    const low = row.low === null ? null : this.round4(Math.max(row.low, 0));
+
+    const anchors = [ltp, open, high, low].filter((value): value is number => value !== null && value > 0);
+    const resolvedHigh = anchors.length ? Math.max(...anchors) : null;
+    const resolvedLow = anchors.length ? Math.min(...anchors) : null;
+
+    let change = row.change;
+    let changePct = row.changePct;
+
+    if (change === null && open !== null && open > 0) {
+      change = this.round4(ltp - open);
+    }
+
+    if (changePct === null && open !== null && open > 0) {
+      changePct = this.round4(((ltp - open) / open) * 100);
+    }
+
+    const turnoverFromPriceVolume = row.volume !== null ? ltp * Number(row.volume) : null;
+
+    return {
+      symbol,
+      company: row.company,
+      sector: row.sector,
+      ltp,
+      change: change === null ? null : this.round4(change),
+      changePct: changePct === null ? null : this.round4(changePct),
+      open,
+      high: resolvedHigh,
+      low: resolvedLow,
+      volume: row.volume,
+      turnover: row.turnover ?? (turnoverFromPriceVolume !== null ? this.round4(turnoverFromPriceVolume) : null),
+    };
   }
 
   private async getSymbolProfiles(): Promise<Map<string, SymbolProfile>> {
@@ -195,6 +283,7 @@ export class NepseScrapeService {
       const res = await axios.get<string>(url, {
         responseType: 'text',
         timeout: 20000,
+        headers: SCRAPE_HTTP_HEADERS,
       });
 
       return res.data;
@@ -208,6 +297,7 @@ export class NepseScrapeService {
         responseType: 'text',
         timeout: 20000,
         httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+        headers: SCRAPE_HTTP_HEADERS,
       });
 
       return retryRes.data;
@@ -279,34 +369,105 @@ export class NepseScrapeService {
 
   private parseSymbolProfiles(html: string): Map<string, SymbolProfile> {
     const $ = cheerio.load(html);
-    const table = this.findTable($, ['symbol']);
-    if (!table) return new Map<string, SymbolProfile>();
-
-    const headers = this.extractHeaders($, table);
-    const rows = this.extractRows($, table);
-
-    const symbolIdx = this.resolveHeaderIndex(headers, ['symbol']);
-    const companyIdx = this.resolveHeaderIndex(headers, ['company', 'name']);
-    const sectorIdx = this.resolveHeaderIndex(headers, ['sector', 'group']);
-
     const bySymbol = new Map<string, SymbolProfile>();
 
-    for (const row of rows) {
-      const cells = $(row).find('td').toArray();
-      if (!cells.length) continue;
+    const table = this.findTable($, ['symbol']);
+    if (table) {
+      const headers = this.extractHeaders($, table);
+      const rows = this.extractRows($, table);
 
-      const symbol = this.readCell($, cells, symbolIdx)?.toUpperCase() ?? '';
-      if (!symbol) continue;
+      const symbolIdx = this.resolveHeaderIndex(headers, ['symbol']);
+      const companyIdx = this.resolveHeaderIndex(headers, ['company', 'name']);
+      const sectorIdx = this.resolveHeaderIndex(headers, ['sector', 'group']);
 
-      const company = this.readCell($, cells, companyIdx);
-      const sector = this.readCell($, cells, sectorIdx);
+      for (const row of rows) {
+        const cells = $(row).find('td').toArray();
+        if (!cells.length) continue;
 
-      if (!company && !sector) continue;
+        const symbol = this.extractSymbol(this.readCell($, cells, symbolIdx));
+        if (!symbol) continue;
 
-      bySymbol.set(symbol, { company, sector });
+        const company = this.readCell($, cells, companyIdx);
+        const sector = this.readCell($, cells, sectorIdx);
+
+        if (!company && !sector) continue;
+
+        bySymbol.set(symbol, { company, sector });
+      }
+    }
+
+    // Fallback: infer symbol/company/sector from any tabular rows when header mapping fails.
+    if (bySymbol.size < 60) {
+      for (const row of $('table tr').toArray()) {
+        const cells = $(row).find('td').toArray();
+        if (cells.length < 2) continue;
+
+        let symbol: string | null = null;
+        let symbolIndex = -1;
+
+        for (let i = 0; i < cells.length; i += 1) {
+          const maybeSymbol = this.extractSymbol(this.readCell($, cells, i));
+          if (maybeSymbol) {
+            symbol = maybeSymbol;
+            symbolIndex = i;
+            break;
+          }
+        }
+
+        if (!symbol) continue;
+        if (bySymbol.has(symbol)) continue;
+
+        const company = this.cleanProfileText(this.readCell($, cells, symbolIndex + 1));
+        const sector = this.cleanProfileText(this.readCell($, cells, symbolIndex + 2));
+
+        if (!company && !sector) continue;
+
+        bySymbol.set(symbol, { company, sector });
+      }
     }
 
     return bySymbol;
+  }
+
+  private extractSymbol(value: string | null): string | null {
+    if (!value) return null;
+
+    const token = value
+      .trim()
+      .split(/\s+/)[0]
+      .replace(/[^A-Za-z0-9]/g, '')
+      .toUpperCase();
+
+    if (!/^[A-Z][A-Z0-9]{1,9}$/.test(token)) {
+      return null;
+    }
+
+    return token;
+  }
+
+  private cleanProfileText(value: string | null): string | null {
+    if (!value) return null;
+
+    const cleaned = value.replace(/\s+/g, ' ').trim();
+    if (!cleaned) return null;
+    if (this.extractSymbol(cleaned) === cleaned) return null;
+    return cleaned;
+  }
+
+  private normalizeIndexName(indexName: string): string {
+    const normalized = this.normalize(indexName);
+
+    for (const alias of INDEX_NAME_ALIASES) {
+      if (alias.pattern.test(normalized)) {
+        return alias.canonical;
+      }
+    }
+
+    return indexName.replace(/\s+/g, ' ').trim();
+  }
+
+  private round4(value: number): number {
+    return Number(value.toFixed(4));
   }
 
   private parseIndices(html: string): IndexValueDto[] {
@@ -338,7 +499,8 @@ export class NepseScrapeService {
       const cells = $(row).find('td').toArray();
       if (!cells.length) continue;
 
-      const indexName = this.readCell($, cells, nameIdx) ?? '';
+      const rawIndexName = this.readCell($, cells, nameIdx) ?? '';
+      const indexName = this.normalizeIndexName(rawIndexName);
       const value = this.toNumber(this.readCell($, cells, valueIdx));
       const change = this.toNumber(this.readCell($, cells, changeIdx));
       const changePct = this.toNumber(this.readCell($, cells, changePctIdx));
@@ -359,7 +521,7 @@ export class NepseScrapeService {
 
     for (const card of cards) {
       const cardEl = $(card);
-      const indexName = cardEl.find('h4').first().text().trim();
+      const indexName = this.normalizeIndexName(cardEl.find('h4').first().text().trim());
       if (!indexName) continue;
 
       const value = this.toNumber(cardEl.find('.mu-value').first().text());

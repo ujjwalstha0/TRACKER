@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Navigate, NavLink, Route, Routes } from 'react-router-dom';
-import { AccountSecurityTerminalPage } from './components/terminal/AccountSecurityTerminalPage';
 import { AuthTerminalPage } from './components/terminal/AuthTerminalPage';
 import { CalculatorTerminalPage } from './components/terminal/CalculatorTerminalPage';
 import { ChartDeskTerminalPage } from './components/terminal/ChartDeskTerminalPage';
@@ -30,7 +29,6 @@ const PRIVATE_NAV = [
   { to: '/chart-desk', label: 'Chart Lab' },
   { to: '/portfolio', label: 'Portfolio' },
   { to: '/trade-journal', label: 'Journal' },
-  { to: '/account-security', label: 'Security' },
 ] as NavItem[];
 
 function ProtectedPage({ user, children }: { user: AuthUser | null; children: JSX.Element }) {
@@ -256,14 +254,6 @@ export default function App() {
                 element={
                   <ProtectedPage user={user}>
                     <TradeJournalTerminalPage />
-                  </ProtectedPage>
-                }
-              />
-              <Route
-                path="/account-security"
-                element={
-                  <ProtectedPage user={user}>
-                    <AccountSecurityTerminalPage user={user as AuthUser} />
                   </ProtectedPage>
                 }
               />
