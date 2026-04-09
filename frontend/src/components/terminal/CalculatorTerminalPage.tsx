@@ -551,11 +551,11 @@ export function CalculatorTerminalPage() {
     <section className="space-y-5">
       <header className="space-y-1">
         <p className="text-xs uppercase tracking-[0.22em] text-zinc-500">NEPSE Cost Engine</p>
-        <h1 className="text-2xl font-semibold text-white">Buy/Sell Calculator</h1>
+        <h1 className="text-xl font-semibold text-white sm:text-2xl">Buy/Sell Calculator</h1>
       </header>
 
       <div className="grid gap-5 xl:grid-cols-[1.1fr_0.9fr]">
-        <form onSubmit={onSubmit} className="terminal-card space-y-4 p-6 dark:bg-zinc-900">
+        <form onSubmit={onSubmit} className="terminal-card space-y-4 p-4 dark:bg-zinc-900 sm:p-6">
           <div className="space-y-1">
             <label htmlFor="symbol" className="text-xs font-medium uppercase tracking-wide text-zinc-400">
               Company Quick Fill
@@ -722,13 +722,13 @@ export function CalculatorTerminalPage() {
           {error ? <p className="text-sm font-medium text-terminal-red">{error}</p> : null}
         </form>
 
-        <aside className="terminal-card p-6">
+        <aside className="terminal-card p-4 sm:p-6">
           <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Result Snapshot</p>
           <h2 className="mt-1 text-lg font-semibold text-white">Execution Cost Summary</h2>
 
-          <div className="mt-5 rounded-xl border border-zinc-700/70 bg-black/60 p-5">
+          <div className="mt-5 rounded-xl border border-zinc-700/70 bg-black/60 p-4 sm:p-5">
             <p className="text-sm text-zinc-400">{summary?.heading ?? 'Total Amount To Pay'}</p>
-            <p className="mt-2 text-4xl font-bold tracking-tight text-white font-mono">
+            <p className="mt-2 text-2xl font-bold tracking-tight text-white font-mono sm:text-4xl">
               ₹ {summary ? formatMoney(summary.value) : '0.00'}
             </p>
           </div>
@@ -770,7 +770,7 @@ export function CalculatorTerminalPage() {
       </div>
 
       <section className="terminal-card overflow-hidden">
-        <header className="border-b border-zinc-800 p-5">
+        <header className="border-b border-zinc-800 p-4 sm:p-5">
           <h3 className="text-base font-semibold text-white">Charge Breakdown</h3>
         </header>
 
@@ -778,25 +778,28 @@ export function CalculatorTerminalPage() {
           <table className="min-w-full divide-y divide-zinc-800 text-sm">
             <thead className="bg-black/40 text-xs uppercase tracking-wide text-zinc-500">
               <tr>
-                <th className="px-5 py-3 text-left">Charge</th>
-                <th className="px-5 py-3 text-left">Rate</th>
-                <th className="px-5 py-3 text-left">How it is charged</th>
-                <th className="px-5 py-3 text-right">Amount</th>
+                <th className="px-3 py-3 text-left sm:px-5">Charge</th>
+                <th className="px-3 py-3 text-left sm:px-5">Rate</th>
+                <th className="hidden px-3 py-3 text-left sm:table-cell sm:px-5">How it is charged</th>
+                <th className="px-3 py-3 text-right sm:px-5">Amount</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-900/80">
               {result?.breakdown.length ? (
                 result.breakdown.map((line, index) => (
                   <tr key={`${line.charge}-${index}`} className="hover:bg-zinc-900/80">
-                    <td className="px-5 py-3 text-zinc-300">{line.charge}</td>
-                    <td className="px-5 py-3 text-zinc-400 font-mono">{formatRate(line.rate)}</td>
-                    <td className="px-5 py-3 text-zinc-500">{explainCharge(line.charge)}</td>
-                    <td className="px-5 py-3 text-right font-mono font-semibold text-white">₹ {formatMoney(line.amount)}</td>
+                    <td className="px-3 py-3 text-zinc-300 sm:px-5">
+                      <p>{line.charge}</p>
+                      <p className="mt-1 text-[11px] text-zinc-500 sm:hidden">{explainCharge(line.charge)}</p>
+                    </td>
+                    <td className="px-3 py-3 text-zinc-400 font-mono sm:px-5">{formatRate(line.rate)}</td>
+                    <td className="hidden px-3 py-3 text-zinc-500 sm:table-cell sm:px-5">{explainCharge(line.charge)}</td>
+                    <td className="px-3 py-3 text-right font-mono font-semibold text-white sm:px-5">₹ {formatMoney(line.amount)}</td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={4} className="px-5 py-8 text-center text-zinc-500">
+                  <td colSpan={4} className="px-3 py-8 text-center text-zinc-500 sm:px-5">
                     Run calculation to see detailed charges.
                   </td>
                 </tr>

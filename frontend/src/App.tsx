@@ -155,6 +155,7 @@ export default function App() {
     const onEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setUserMenuOpen(false);
+        setMobileNavOpen(false);
       }
     };
 
@@ -183,13 +184,13 @@ export default function App() {
 
       <header className="fixed inset-x-0 top-0 z-50 border-b border-cyan-900/35 bg-[linear-gradient(90deg,rgba(4,10,14,0.97),rgba(8,20,30,0.95),rgba(8,13,20,0.97))] px-4 py-3 shadow-[0_8px_30px_rgba(0,0,0,0.35)] backdrop-blur-xl">
         <div className="mx-auto flex max-w-[1800px] items-center gap-4">
-          <div className="flex min-w-[190px] items-center gap-3 sm:min-w-[250px] lg:w-[20%] lg:min-w-[250px]">
+          <div className="flex min-w-0 items-center gap-3 sm:min-w-[250px] lg:w-[20%] lg:min-w-[250px]">
             <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-cyan-400/40 bg-cyan-500/15 font-mono text-sm font-bold text-cyan-100">
               NX
             </div>
-            <div>
+            <div className="min-w-0">
               <p className="text-[10px] uppercase tracking-[0.34em] text-cyan-200/75">NEPSE EXECUTION DESK</p>
-              <p className="mt-1 text-sm font-semibold text-zinc-100">Professional Trading Terminal</p>
+              <p className="mt-1 hidden truncate text-sm font-semibold text-zinc-100 sm:block">Professional Trading Terminal</p>
             </div>
           </div>
 
@@ -198,6 +199,8 @@ export default function App() {
               type="button"
               onClick={() => setMobileNavOpen((old) => !old)}
               className="rounded-lg border border-zinc-700/80 bg-zinc-900/75 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-200"
+              aria-expanded={mobileNavOpen}
+              aria-label="Toggle navigation menu"
             >
               {mobileNavOpen ? 'Close Menu' : 'Menu'}
             </button>
@@ -271,8 +274,14 @@ export default function App() {
       </header>
 
       {mobileNavOpen ? (
-        <div className="fixed inset-0 top-[73px] z-40 bg-black/70 backdrop-blur-sm lg:hidden">
-          <div className="mx-3 mt-3 rounded-2xl border border-zinc-800 bg-zinc-950/95 p-3 shadow-terminal">
+        <div
+          className="fixed inset-0 top-[73px] z-40 bg-black/70 backdrop-blur-sm lg:hidden"
+          onClick={() => setMobileNavOpen(false)}
+        >
+          <div
+            className="mx-3 mt-3 max-h-[calc(100dvh-92px)] overflow-y-auto rounded-2xl border border-zinc-800 bg-zinc-950/95 p-3 shadow-terminal"
+            onClick={(event) => event.stopPropagation()}
+          >
             <nav className="grid gap-2">
               {allNav.map((item) => (
                 <NavLink
