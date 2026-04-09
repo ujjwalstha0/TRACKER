@@ -376,6 +376,9 @@ export function ChartDeskTerminalPage() {
         <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Pro Trader Signal</p>
         {signal ? (
           <>
+            {signal.signal === 'SELL' ? (
+              <p className="text-xs text-terminal-amber">SELL is interpreted as an exit/reduce call for existing holdings (no short-selling assumption for NEPSE).</p>
+            ) : null}
             <div className="flex flex-wrap items-center gap-2">
               <span className={`rounded-lg border px-4 py-2 text-xl font-bold uppercase tracking-wide ${signalBadgeClass(signal.signal)}`}>
                 {signal.signal}
@@ -392,15 +395,21 @@ export function ChartDeskTerminalPage() {
             {signal.plan ? (
               <div className="mt-3 grid gap-2 rounded-lg border border-zinc-800 bg-zinc-950/70 p-3 md:grid-cols-2 xl:grid-cols-5">
                 <div>
-                  <p className="text-[10px] uppercase tracking-wide text-zinc-500">Entry</p>
+                  <p className="text-[10px] uppercase tracking-wide text-zinc-500">
+                    {signal.signal === 'SELL' ? 'Exit Reference' : 'Entry'}
+                  </p>
                   <p className="font-mono text-sm text-zinc-100">₹ {formatMoney(signal.plan.entryPrice)}</p>
                 </div>
                 <div>
-                  <p className="text-[10px] uppercase tracking-wide text-zinc-500">Stop-Loss</p>
+                  <p className="text-[10px] uppercase tracking-wide text-zinc-500">
+                    {signal.signal === 'SELL' ? 'Risk Line' : 'Stop-Loss'}
+                  </p>
                   <p className="font-mono text-sm text-terminal-red">₹ {formatMoney(signal.plan.stopLoss)}</p>
                 </div>
                 <div>
-                  <p className="text-[10px] uppercase tracking-wide text-zinc-500">Target</p>
+                  <p className="text-[10px] uppercase tracking-wide text-zinc-500">
+                    {signal.signal === 'SELL' ? 'Support Zone' : 'Target'}
+                  </p>
                   <p className="font-mono text-sm text-terminal-green">₹ {formatMoney(signal.plan.targetPrice)}</p>
                 </div>
                 <div>

@@ -64,7 +64,7 @@ export function MarketNewsTerminalPage() {
         <p className="text-xs uppercase tracking-[0.22em] text-zinc-500">Macro & Market Monitor</p>
         <h1 className="text-2xl font-semibold text-white">Economy News Impact Desk</h1>
         <p className="text-sm text-zinc-400">
-          Curated economy and policy headlines that can influence NEPSE sentiment, liquidity, and sector rotation.
+          Curated multi-source economy and policy headlines from the latest 5 days that can influence NEPSE sentiment, liquidity, and sector rotation.
         </p>
       </header>
 
@@ -118,7 +118,7 @@ export function MarketNewsTerminalPage() {
                     {item.impact}
                   </span>
                   <span className="text-xs text-zinc-500">
-                    {item.publishedDate ?? 'Date unavailable'} • {item.source}
+                    {item.publishedDate ?? 'Date unavailable'} • {item.source.toUpperCase()}
                   </span>
                 </div>
 
@@ -148,7 +148,7 @@ export function MarketNewsTerminalPage() {
       </section>
 
       <p className="text-xs text-zinc-500">
-        News is aggregated from public headlines and auto-classified by market-impact keywords. Always verify source context before trading decisions.
+        News is aggregated from multiple public sources, filtered to recent 5-day items, and ranked for user usefulness before listing.
       </p>
     </section>
   );

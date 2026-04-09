@@ -1,4 +1,10 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { OhlcService } from '../ohlc/ohlc.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { OhlcCandleDto } from '../ohlc/ohlc.types';
@@ -44,6 +50,14 @@ const MIN_STOP_DISTANCE_PCT = 0.012;
 const NOTEBOOK_DEFAULT_LIMIT = 45;
 const NOTEBOOK_MAX_LIMIT = 140;
 const NEPAL_TIME_ZONE = 'Asia/Kathmandu';
+const AUTO_NOTEBOOK_LIMIT = 70;
+const AUTO_NOTEBOOK_REFRESH_MS = 4 * 60 * 1000;
+const LIVE_PERSIST_THROTTLE_MS = 2 * 60 * 1000;
+const NEPSE_OPEN_MINUTES = 11 * 60;
+const NEPSE_CLOSE_MINUTES = 15 * 60;
+const NEPSE_EVALUATE_AFTER_CLOSE_MINUTES = 15 * 60 + 5;
+
+type MarketSessionState = 'OPEN' | 'POST_CLOSE' | 'CLOSED';
 
 interface SignalNotebookRow {
   id: bigint;
@@ -78,15 +92,35 @@ interface SignalCandleSelection {
 }
 
 @Injectable()
-export class SignalService {
+export class SignalService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(SignalService.name);
   private readonly signalCache = new Map<string, { fetchedAt: number; result: TradingSignalResult }>();
+  private readonly lastLivePersistAt = new Map<string, number>();
+  private autoNotebookTimer: NodeJS.Timeout | null = null;
+  private autoNotebookRunning = false;
 
   constructor(
     private readonly ohlcService: OhlcService,
     private readonly prisma: PrismaService,
   ) {}
 
-  async calculateSignal(symbol: string): Promise<TradingSignalResult> {
+  onModuleInit() {
+    void this.runAutoNotebookCycle('startup');
+
+    this.autoNotebookTimer = setInterval(() => {
+      void this.runAutoNotebookCycle('interval');
+    }, AUTO_NOTEBOOK_REFRESH_MS);
+  }
+
+  onModuleDestroy() {
+    if (this.autoNotebookTimer) {
+      clearInterval(this.autoNotebookTimer);
+      this.autoNotebookTimer = null;
+    }
+  }
+
+  async calculateSignal(symbol: string, options?: { persistNotebook?: boolean }): Promise<TradingSignalResult> {
+    const shouldPersistNotebook = options?.persistNotebook ?? true;
     const normalizedSymbol = symbol.trim().toUpperCase();
     if (!normalizedSymbol) {
       throw new BadRequestException('Query param "symbol" is required.');
@@ -95,6 +129,10 @@ export class SignalService {
     const now = Date.now();
     const cached = this.signalCache.get(normalizedSymbol);
     if (cached && now - cached.fetchedAt < SIGNAL_CACHE_TTL_MS) {
+      if (shouldPersistNotebook) {
+        await this.persistLiveDirectionalSignal(normalizedSymbol, cached.result);
+      }
+
       return cached.result;
     }
 
@@ -177,6 +215,10 @@ export class SignalService {
       result,
     });
 
+    if (shouldPersistNotebook) {
+      await this.persistLiveDirectionalSignal(normalizedSymbol, result);
+    }
+
     return result;
   }
 
@@ -191,61 +233,13 @@ export class SignalService {
     });
 
     for (const row of universe) {
-      const signal = await this.calculateSignal(row.symbol);
-      if (!this.isDirectionalSignal(signal.signal) || !signal.plan) {
-        continue;
+      try {
+        const signal = await this.calculateSignal(row.symbol, { persistNotebook: false });
+        await this.upsertNotebookEntry(tradeDate, row.symbol, signal);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.warn(`Notebook generation skipped ${row.symbol}: ${message}`);
       }
-
-      await this.prisma.signalNotebookEntry.upsert({
-        where: {
-          tradeDate_symbol: {
-            tradeDate,
-            symbol: row.symbol,
-          },
-        },
-        create: {
-          tradeDate,
-          symbol: row.symbol,
-          signal: signal.signal,
-          confidence: signal.confidence,
-          entryPrice: signal.plan.entryPrice,
-          stopLoss: signal.plan.stopLoss,
-          targetPrice: signal.plan.targetPrice,
-          riskReward: signal.plan.riskReward,
-          qualityScore: signal.qualityScore,
-          reasons: signal.reasons,
-          requiredChecks: signal.requiredChecks
-            .filter((item) => item.required)
-            .map((item) => item.label),
-          failedChecks: signal.failedChecks,
-          recommendedAction: signal.recommendedAction,
-          generatedAt: new Date(signal.generatedAt),
-          evaluatedAt: null,
-          closePrice: null,
-          outcome: 'PENDING',
-          accuracyScore: null,
-        },
-        update: {
-          signal: signal.signal,
-          confidence: signal.confidence,
-          entryPrice: signal.plan.entryPrice,
-          stopLoss: signal.plan.stopLoss,
-          targetPrice: signal.plan.targetPrice,
-          riskReward: signal.plan.riskReward,
-          qualityScore: signal.qualityScore,
-          reasons: signal.reasons,
-          requiredChecks: signal.requiredChecks
-            .filter((item) => item.required)
-            .map((item) => item.label),
-          failedChecks: signal.failedChecks,
-          recommendedAction: signal.recommendedAction,
-          generatedAt: new Date(signal.generatedAt),
-          evaluatedAt: null,
-          closePrice: null,
-          outcome: 'PENDING',
-          accuracyScore: null,
-        },
-      });
     }
 
     return this.getNotebookByDate(tradeDate);
@@ -314,7 +308,135 @@ export class SignalService {
   }
 
   async getTodayNotebook(): Promise<SignalNotebookPayload> {
-    return this.getNotebookByDate(this.getNepalTradeDate());
+    const tradeDate = this.getNepalTradeDate();
+    const sessionState = this.getMarketSessionState();
+
+    if (sessionState === 'OPEN') {
+      const notebook = await this.getNotebookByDate(tradeDate);
+      const generatedAt = notebook.generatedAt ? Date.parse(notebook.generatedAt) : 0;
+      const stale = !generatedAt || Date.now() - generatedAt > AUTO_NOTEBOOK_REFRESH_MS;
+
+      if (stale) {
+        return this.generateDailyNotebook(AUTO_NOTEBOOK_LIMIT);
+      }
+
+      return notebook;
+    }
+
+    if (sessionState === 'POST_CLOSE') {
+      const notebook = await this.getNotebookByDate(tradeDate);
+      if (notebook.summary.pendingCount > 0) {
+        return this.evaluateTodayNotebookClose();
+      }
+
+      return notebook;
+    }
+
+    return this.getNotebookByDate(tradeDate);
+  }
+
+  private async runAutoNotebookCycle(origin: 'startup' | 'interval'): Promise<void> {
+    if (this.autoNotebookRunning) {
+      return;
+    }
+
+    this.autoNotebookRunning = true;
+
+    try {
+      const state = this.getMarketSessionState();
+
+      if (state === 'OPEN') {
+        await this.generateDailyNotebook(AUTO_NOTEBOOK_LIMIT);
+        return;
+      }
+
+      if (state === 'POST_CLOSE') {
+        await this.evaluateTodayNotebookClose();
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Auto notebook cycle (${origin}) failed: ${message}`);
+    } finally {
+      this.autoNotebookRunning = false;
+    }
+  }
+
+  private async persistLiveDirectionalSignal(symbol: string, signal: TradingSignalResult): Promise<void> {
+    if (!this.isDirectionalSignal(signal.signal) || !signal.plan) {
+      return;
+    }
+
+    if (this.getMarketSessionState() !== 'OPEN') {
+      return;
+    }
+
+    const key = `${this.toIsoDate(this.getNepalTradeDate())}:${symbol}`;
+    const now = Date.now();
+    const lastPersistedAt = this.lastLivePersistAt.get(key) ?? 0;
+
+    if (now - lastPersistedAt < LIVE_PERSIST_THROTTLE_MS) {
+      return;
+    }
+
+    await this.upsertNotebookEntry(this.getNepalTradeDate(), symbol, signal);
+    this.lastLivePersistAt.set(key, now);
+  }
+
+  private async upsertNotebookEntry(
+    tradeDate: Date,
+    symbol: string,
+    signal: TradingSignalResult,
+  ): Promise<void> {
+    if (!this.isDirectionalSignal(signal.signal) || !signal.plan) {
+      return;
+    }
+
+    await this.prisma.signalNotebookEntry.upsert({
+      where: {
+        tradeDate_symbol: {
+          tradeDate,
+          symbol,
+        },
+      },
+      create: {
+        tradeDate,
+        symbol,
+        signal: signal.signal,
+        confidence: signal.confidence,
+        entryPrice: signal.plan.entryPrice,
+        stopLoss: signal.plan.stopLoss,
+        targetPrice: signal.plan.targetPrice,
+        riskReward: signal.plan.riskReward,
+        qualityScore: signal.qualityScore,
+        reasons: signal.reasons,
+        requiredChecks: signal.requiredChecks
+          .filter((item) => item.required)
+          .map((item) => item.label),
+        failedChecks: signal.failedChecks,
+        recommendedAction: signal.recommendedAction,
+        generatedAt: new Date(signal.generatedAt),
+        evaluatedAt: null,
+        closePrice: null,
+        outcome: 'PENDING',
+        accuracyScore: null,
+      },
+      update: {
+        signal: signal.signal,
+        confidence: signal.confidence,
+        entryPrice: signal.plan.entryPrice,
+        stopLoss: signal.plan.stopLoss,
+        targetPrice: signal.plan.targetPrice,
+        riskReward: signal.plan.riskReward,
+        qualityScore: signal.qualityScore,
+        reasons: signal.reasons,
+        requiredChecks: signal.requiredChecks
+          .filter((item) => item.required)
+          .map((item) => item.label),
+        failedChecks: signal.failedChecks,
+        recommendedAction: signal.recommendedAction,
+        generatedAt: new Date(signal.generatedAt),
+      },
+    });
   }
 
   private async loadBestSignalCandles(symbol: string): Promise<SignalCandleSelection> {
@@ -678,7 +800,7 @@ export class SignalService {
       return [
         ...sellReasons,
         `Quality score ${sellQuality.toFixed(1)}% passed minimum execution gate.`,
-        'Use plan levels and avoid oversized countertrend entries.',
+        'NEPSE cash market context: SELL means exit/reduce existing holdings, not short selling.',
       ];
     }
 
@@ -701,8 +823,8 @@ export class SignalService {
     if (signal === 'HOLD') return 'WAIT';
 
     const actions = {
-      HIGH: signal === 'BUY' ? 'ENTER LONG WITH FULL PLAN' : 'ENTER SHORT WITH FULL PLAN',
-      MEDIUM: signal === 'BUY' ? 'ENTER LONG WITH REDUCED SIZE' : 'ENTER SHORT WITH REDUCED SIZE',
+      HIGH: signal === 'BUY' ? 'ENTER LONG WITH FULL PLAN' : 'EXIT / REDUCE LONG HOLDINGS NOW',
+      MEDIUM: signal === 'BUY' ? 'ENTER LONG WITH REDUCED SIZE' : 'TRIM HOLDINGS AND PROTECT CAPITAL',
       LOW: signal === 'BUY' ? 'WATCH FOR BETTER BUY SETUP' : 'WATCH FOR BETTER SELL SETUP',
     };
 
@@ -763,26 +885,27 @@ export class SignalService {
       };
     }
 
-    const structuralStop = Math.max(
+    const reclaimLevel = Math.max(
       data.ema21,
       data.ema20,
       data.vwap,
       data.close + halfBandRange * 0.75,
     );
-    const riskPerShare = Math.max(minimumRisk, structuralStop - data.close);
-    const stopLoss = data.close + riskPerShare;
-    const rewardPerShare = riskPerShare * TARGET_RISK_MULTIPLIER;
-    const targetPrice = Math.max(0.01, data.close - rewardPerShare);
+    const riskPerShare = Math.max(minimumRisk, reclaimLevel - data.close);
+    const riskLine = data.close + riskPerShare;
+    const avoidableDownside = riskPerShare * TARGET_RISK_MULTIPLIER;
+    const supportZone = Math.max(0.01, data.close - avoidableDownside);
 
     return {
       entryPrice: this.round4(data.close),
-      stopLoss: this.round4(stopLoss),
-      targetPrice: this.round4(targetPrice),
+      stopLoss: this.round4(riskLine),
+      targetPrice: this.round4(supportZone),
       riskPerShare: this.round4(riskPerShare),
-      rewardPerShare: this.round4(rewardPerShare),
-      riskReward: this.round2(rewardPerShare / riskPerShare),
-      expectedMovePct: this.round2((rewardPerShare / data.close) * 100),
-      invalidation: 'Invalidate SELL if price closes above stop-loss or regains EMA21/VWAP control.',
+      rewardPerShare: this.round4(avoidableDownside),
+      riskReward: this.round2(avoidableDownside / riskPerShare),
+      expectedMovePct: this.round2((avoidableDownside / data.close) * 100),
+      invalidation:
+        'Invalidate SELL-exit if price reclaims risk line and regains EMA21/VWAP trend control (no short-selling assumption).',
     };
   }
 
@@ -969,6 +1092,37 @@ export class SignalService {
     const day = Number(parts.find((part) => part.type === 'day')?.value ?? now.getUTCDate());
 
     return new Date(Date.UTC(year, month - 1, day));
+  }
+
+  private getMarketSessionState(now = new Date()): MarketSessionState {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: NEPAL_TIME_ZONE,
+      weekday: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).formatToParts(now);
+
+    const weekday = parts.find((part) => part.type === 'weekday')?.value ?? 'Sun';
+    const hour = Number(parts.find((part) => part.type === 'hour')?.value ?? 0);
+    const minute = Number(parts.find((part) => part.type === 'minute')?.value ?? 0);
+
+    // NEPSE primary session runs Sunday-Thursday.
+    if (weekday === 'Fri' || weekday === 'Sat') {
+      return 'CLOSED';
+    }
+
+    const totalMinutes = hour * 60 + minute;
+
+    if (totalMinutes >= NEPSE_OPEN_MINUTES && totalMinutes < NEPSE_CLOSE_MINUTES) {
+      return 'OPEN';
+    }
+
+    if (totalMinutes >= NEPSE_EVALUATE_AFTER_CLOSE_MINUTES) {
+      return 'POST_CLOSE';
+    }
+
+    return 'CLOSED';
   }
 
   private toIsoDate(date: Date): string {

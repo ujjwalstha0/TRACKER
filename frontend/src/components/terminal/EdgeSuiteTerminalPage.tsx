@@ -1,13 +1,11 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  evaluateSignalNotebookClose,
   fetchIndicators,
   fetchIndices,
   fetchPortfolio,
   fetchSignal,
   fetchSignalNotebookToday,
   fetchWatchlist,
-  generateSignalNotebook,
 } from '../../lib/api';
 import {
   AuthUser,
@@ -94,6 +92,11 @@ function formatPercent(value: number | null, digits = 2): string {
 function formatCompactPrice(value: number | null | undefined): string {
   if (value === null || value === undefined) return '-';
   return formatMoney(value);
+}
+
+function formatTimestamp(value: string | null | undefined): string {
+  if (!value) return '-';
+  return new Date(value).toLocaleString();
 }
 
 function severityClasses(severity: AlertSeverity): string {
@@ -196,7 +199,6 @@ export function EdgeSuiteTerminalPage({ user }: { user: AuthUser | null }) {
   const [notebook, setNotebook] = useState<SignalNotebookResponse | null>(null);
   const [notebookLoading, setNotebookLoading] = useState(false);
   const [notebookError, setNotebookError] = useState('');
-  const [notebookAction, setNotebookAction] = useState<'generate' | 'evaluate' | null>(null);
   const [riskLimits, setRiskLimits] = useState<RiskLimits>({
     maxSectorPct: '35',
     maxSinglePositionPct: '12',
@@ -237,34 +239,6 @@ export function EdgeSuiteTerminalPage({ user }: { user: AuthUser | null }) {
       setNotebookError(error instanceof Error ? error.message : 'Failed to load signal notebook.');
     } finally {
       setNotebookLoading(false);
-    }
-  }, []);
-
-  const handleGenerateNotebook = useCallback(async () => {
-    setNotebookAction('generate');
-
-    try {
-      const response = await generateSignalNotebook(70);
-      setNotebook(response);
-      setNotebookError('');
-    } catch (error) {
-      setNotebookError(error instanceof Error ? error.message : 'Failed to generate notebook.');
-    } finally {
-      setNotebookAction(null);
-    }
-  }, []);
-
-  const handleEvaluateNotebook = useCallback(async () => {
-    setNotebookAction('evaluate');
-
-    try {
-      const response = await evaluateSignalNotebookClose();
-      setNotebook(response);
-      setNotebookError('');
-    } catch (error) {
-      setNotebookError(error instanceof Error ? error.message : 'Failed to evaluate notebook.');
-    } finally {
-      setNotebookAction(null);
     }
   }, []);
 
@@ -872,12 +846,6 @@ export function EdgeSuiteTerminalPage({ user }: { user: AuthUser | null }) {
             <button type="button" onClick={() => void loadSignalNotebook()} className="terminal-btn">
               {notebookLoading ? 'Loading notebook...' : 'Refresh Notebook'}
             </button>
-            <button type="button" onClick={() => void handleGenerateNotebook()} className="terminal-btn-primary">
-              {notebookAction === 'generate' ? 'Generating notes...' : 'Generate Today Buy/Sell Notes'}
-            </button>
-            <button type="button" onClick={() => void handleEvaluateNotebook()} className="terminal-btn">
-              {notebookAction === 'evaluate' ? 'Evaluating close...' : 'Evaluate At Market Close'}
-            </button>
           </div>
           <p className="mt-3 text-xs text-zinc-500">
             Last refresh: {lastRefreshedAt ? new Date(lastRefreshedAt).toLocaleString() : 'Not refreshed yet'}
@@ -915,7 +883,7 @@ export function EdgeSuiteTerminalPage({ user }: { user: AuthUser | null }) {
         <header className="border-b border-zinc-800 p-4">
           <h2 className="text-base font-semibold text-white">Daily Buy/Sell Notebook</h2>
           <p className="mt-1 text-xs text-zinc-500">
-            Stores today&apos;s system recommendations with entry, stop-loss, target, reasoning, and close-session accuracy review.
+            Auto-populated during market session and auto-evaluated after close. No manual generate/evaluate action needed.
           </p>
         </header>
 
@@ -945,15 +913,19 @@ export function EdgeSuiteTerminalPage({ user }: { user: AuthUser | null }) {
             </div>
           </div>
 
+          <p className="text-xs text-zinc-500">
+            Generated: {formatTimestamp(notebook?.generatedAt)} | Evaluated: {formatTimestamp(notebook?.evaluatedAt)}
+          </p>
+
           <div className="overflow-x-auto rounded-lg border border-zinc-800">
             <table className="min-w-full divide-y divide-zinc-800 text-sm">
               <thead className="bg-black/40 text-xs uppercase tracking-wide text-zinc-500">
                 <tr>
                   <th className="px-3 py-2 text-left">Symbol</th>
                   <th className="px-3 py-2 text-left">Signal</th>
-                  <th className="px-3 py-2 text-right">Entry</th>
-                  <th className="px-3 py-2 text-right">Stop</th>
-                  <th className="px-3 py-2 text-right">Target</th>
+                  <th className="px-3 py-2 text-right">Ref Price</th>
+                  <th className="px-3 py-2 text-right">Risk Line</th>
+                  <th className="px-3 py-2 text-right">Target/Support</th>
                   <th className="px-3 py-2 text-right">R:R</th>
                   <th className="px-3 py-2 text-right">Quality</th>
                   <th className="px-3 py-2 text-left">Outcome</th>
@@ -996,7 +968,7 @@ export function EdgeSuiteTerminalPage({ user }: { user: AuthUser | null }) {
                 ) : (
                   <tr>
                     <td colSpan={10} className="px-3 py-6 text-center text-zinc-500">
-                      No notebook entries yet. Click "Generate Today Buy/Sell Notes" to create your daily recommendation log.
+                      Notebook is building automatically during market session. Refresh in a moment for live suggestions.
                     </td>
                   </tr>
                 )}
@@ -1005,7 +977,7 @@ export function EdgeSuiteTerminalPage({ user }: { user: AuthUser | null }) {
           </div>
 
           <p className="text-xs text-zinc-500">
-            Evaluated entries are scored after market close using latest available market price against entry, stop-loss, and target rules.
+            SELL rows are NEPSE exit calls for existing holdings (not short-selling). Risk line and support zone guide exit quality tracking.
           </p>
         </div>
       </section>
@@ -1203,7 +1175,9 @@ export function EdgeSuiteTerminalPage({ user }: { user: AuthUser | null }) {
                         <span className="text-xs text-zinc-400">
                           {row.signal?.signal ?? 'HOLD'} S{row.signal?.strength ?? 0}
                           {row.signal?.plan
-                            ? ` | E ${formatCompactPrice(row.signal.plan.entryPrice)} / SL ${formatCompactPrice(row.signal.plan.stopLoss)} / TP ${formatCompactPrice(row.signal.plan.targetPrice)}`
+                            ? row.signal.signal === 'SELL'
+                              ? ` | Exit ${formatCompactPrice(row.signal.plan.entryPrice)} / Risk ${formatCompactPrice(row.signal.plan.stopLoss)} / Support ${formatCompactPrice(row.signal.plan.targetPrice)}`
+                              : ` | E ${formatCompactPrice(row.signal.plan.entryPrice)} / SL ${formatCompactPrice(row.signal.plan.stopLoss)} / TP ${formatCompactPrice(row.signal.plan.targetPrice)}`
                             : ''}
                           {` | T ₹ ${formatMoney(row.turnover ?? 0)}`}
                         </span>
