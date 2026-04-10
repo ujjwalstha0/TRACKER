@@ -26,6 +26,11 @@ function safeFixed(value: number | null | undefined, digits = 2): string {
   return parsed.toFixed(digits);
 }
 
+function formatPercent(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '-';
+  return `${value.toFixed(2)}%`;
+}
+
 export function ChartDeskTerminalPage() {
   const { symbol: symbolParam } = useParams<{ symbol?: string }>();
   const navigate = useNavigate();
@@ -37,6 +42,7 @@ export function ChartDeskTerminalPage() {
   const [showEma20, setShowEma20] = useState(true);
   const [showBollinger, setShowBollinger] = useState(true);
   const [showVwap, setShowVwap] = useState(false);
+  const [showStructure, setShowStructure] = useState(true);
   const [payload, setPayload] = useState<IndicatorsResponse | null>(null);
   const [signal, setSignal] = useState<TradingSignalResponse | null>(null);
   const [activeDataInterval, setActiveDataInterval] = useState<Interval>('15m');
@@ -246,6 +252,38 @@ export function ChartDeskTerminalPage() {
   }, [payload]);
 
   const chartOptions = useMemo<ApexOptions>(() => {
+    const structureAnnotations =
+      showStructure && signal
+        ? [
+            ...signal.structure.supportLevels.slice(0, 3).map((level, index) => ({
+              y: level.price,
+              borderColor: '#22c55e',
+              strokeDashArray: 4,
+              label: {
+                text: `S${index + 1} ${safeFixed(level.price, 2)} (${level.touches}x)`,
+                style: {
+                  background: '#052e16',
+                  color: '#86efac',
+                  fontSize: '10px',
+                },
+              },
+            })),
+            ...signal.structure.resistanceLevels.slice(0, 3).map((level, index) => ({
+              y: level.price,
+              borderColor: '#ef4444',
+              strokeDashArray: 4,
+              label: {
+                text: `R${index + 1} ${safeFixed(level.price, 2)} (${level.touches}x)`,
+                style: {
+                  background: '#450a0a',
+                  color: '#fca5a5',
+                  fontSize: '10px',
+                },
+              },
+            })),
+          ]
+        : [];
+
     return {
       chart: {
         type: 'candlestick',
@@ -267,10 +305,13 @@ export function ChartDeskTerminalPage() {
         enabled: false,
       },
       stroke: {
-        width: [1, 2.4, 2.2, 1.4, 1.4, 2],
-        curve: 'smooth',
+        width: 2,
+        curve: 'straight',
       },
       colors: ['#94a3b8', '#f59e0b', '#34d399', '#a1a1aa', '#a1a1aa', '#22d3ee'],
+      annotations: {
+        yaxis: structureAnnotations,
+      },
       grid: {
         borderColor: '#2f2f35',
         strokeDashArray: 3,
@@ -312,7 +353,7 @@ export function ChartDeskTerminalPage() {
         theme: 'dark',
       },
     };
-  }, []);
+  }, [showStructure, signal]);
 
   const volumeOptions = useMemo<ApexOptions>(() => {
     return {
@@ -372,13 +413,14 @@ export function ChartDeskTerminalPage() {
         <h1 className="text-2xl font-semibold text-white">Chart Desk</h1>
       </header>
 
-      <section className="terminal-card space-y-3 p-5">
-        <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Pro Trader Signal</p>
+      <section className="terminal-card space-y-4 p-5">
+        <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Professional Signal Engine</p>
         {signal ? (
           <>
             {signal.signal === 'SELL' ? (
-              <p className="text-xs text-terminal-amber">SELL is interpreted as an exit/reduce call for existing holdings (no short-selling assumption for NEPSE).</p>
+              <p className="text-xs text-terminal-amber">SELL means reduce/exit existing holdings in NEPSE cash market. No short-selling assumption is used.</p>
             ) : null}
+
             <div className="flex flex-wrap items-center gap-2">
               <span className={`rounded-lg border px-4 py-2 text-xl font-bold uppercase tracking-wide ${signalBadgeClass(signal.signal)}`}>
                 {signal.signal}
@@ -386,67 +428,176 @@ export function ChartDeskTerminalPage() {
               <span className={`rounded-lg border px-3 py-1 text-xs font-semibold uppercase tracking-wide ${confidenceBadgeClass(signal.confidence)}`}>
                 {signal.confidence}
               </span>
+              <span className="rounded-lg border border-zinc-700 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-zinc-200">
+                {signal.structure.trendBias}
+              </span>
+              <span className="rounded-lg border border-zinc-700 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-zinc-300">
+                {signal.interval}
+              </span>
             </div>
-            <p className="text-sm font-medium text-zinc-200">
-              {signal.signal} ({signal.confidence}) - {signal.reasons.join(' + ') || 'No strong reasons'}
-            </p>
-            <p className="text-xs text-zinc-500">Recommended Action: {signal.recommendedAction}</p>
+
+            <p className="text-sm text-zinc-200">Recommended action: {signal.recommendedAction}</p>
+
+            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+                <p className="text-[10px] uppercase tracking-wide text-zinc-500">Quality</p>
+                <p className="mt-1 font-mono text-lg text-cyan-200">{signal.qualityScore.toFixed(1)}%</p>
+              </div>
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+                <p className="text-[10px] uppercase tracking-wide text-zinc-500">Buy Pressure</p>
+                <p className="mt-1 font-mono text-lg text-terminal-green">{signal.buyScore}</p>
+              </div>
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+                <p className="text-[10px] uppercase tracking-wide text-zinc-500">Sell Pressure</p>
+                <p className="mt-1 font-mono text-lg text-terminal-red">{signal.sellScore}</p>
+              </div>
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+                <p className="text-[10px] uppercase tracking-wide text-zinc-500">Model Sample</p>
+                <p className="mt-1 font-mono text-lg text-zinc-100">{signal.performance.sampleSize}</p>
+              </div>
+            </div>
 
             {signal.plan ? (
-              <div className="mt-3 grid gap-2 rounded-lg border border-zinc-800 bg-zinc-950/70 p-3 md:grid-cols-2 xl:grid-cols-5">
-                <div>
-                  <p className="text-[10px] uppercase tracking-wide text-zinc-500">
-                    {signal.signal === 'SELL' ? 'Exit Reference' : 'Entry'}
-                  </p>
-                  <p className="font-mono text-sm text-zinc-100">₹ {formatMoney(signal.plan.entryPrice)}</p>
+              <>
+                <div className="grid gap-2 rounded-lg border border-zinc-800 bg-zinc-950/70 p-3 md:grid-cols-2 xl:grid-cols-7">
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-zinc-500">Entry / Exit Ref</p>
+                    <p className="font-mono text-sm text-zinc-100">₹ {formatMoney(signal.plan.entryPrice)}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-zinc-500">Stop / Risk Line</p>
+                    <p className="font-mono text-sm text-terminal-red">₹ {formatMoney(signal.plan.stopLoss)}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-zinc-500">TP1</p>
+                    <p className="font-mono text-sm text-terminal-green">₹ {formatMoney(signal.plan.takeProfit1)}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-zinc-500">TP2</p>
+                    <p className="font-mono text-sm text-terminal-green">₹ {formatMoney(signal.plan.takeProfit2)}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-zinc-500">Trailing Stop</p>
+                    <p className="font-mono text-sm text-zinc-100">₹ {formatMoney(signal.plan.trailingStop)}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-zinc-500">Risk:Reward</p>
+                    <p className="font-mono text-sm text-zinc-100">{signal.plan.riskReward.toFixed(2)}R</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-zinc-500">Expected Move</p>
+                    <p className="font-mono text-sm text-zinc-100">{formatPercent(signal.plan.expectedMovePct)}</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-[10px] uppercase tracking-wide text-zinc-500">
-                    {signal.signal === 'SELL' ? 'Risk Line' : 'Stop-Loss'}
-                  </p>
-                  <p className="font-mono text-sm text-terminal-red">₹ {formatMoney(signal.plan.stopLoss)}</p>
+
+                <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+                  <p className="text-[10px] uppercase tracking-wide text-zinc-500">Exit Logic</p>
+                  <p className="mt-1 text-xs text-zinc-200">{signal.plan.primaryExitRule}</p>
+                  <p className="mt-1 text-xs text-zinc-400">{signal.plan.exitRationale}</p>
+                  <p className="mt-2 text-[11px] text-zinc-300">Invalidation: {signal.plan.invalidation}</p>
+
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        navigate(
+                          `/execution?symbol=${encodeURIComponent(selectedSymbol)}&side=${signal.signal === 'BUY' ? 'buy' : 'sell'}`,
+                        )
+                      }
+                      className="terminal-btn"
+                    >
+                      Plan in Execution
+                    </button>
+                    <button type="button" onClick={() => void loadData()} className="terminal-btn">
+                      Re-check Setup
+                    </button>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-[10px] uppercase tracking-wide text-zinc-500">
-                    {signal.signal === 'SELL' ? 'Support Zone' : 'Target'}
-                  </p>
-                  <p className="font-mono text-sm text-terminal-green">₹ {formatMoney(signal.plan.targetPrice)}</p>
-                </div>
-                <div>
-                  <p className="text-[10px] uppercase tracking-wide text-zinc-500">Risk:Reward</p>
-                  <p className="font-mono text-sm text-zinc-100">{signal.plan.riskReward.toFixed(2)}R</p>
-                </div>
-                <div>
-                  <p className="text-[10px] uppercase tracking-wide text-zinc-500">Quality</p>
-                  <p className="font-mono text-sm text-cyan-200">{signal.qualityScore.toFixed(1)}%</p>
-                </div>
-                <div className="md:col-span-2 xl:col-span-5">
-                  <p className="text-[10px] uppercase tracking-wide text-zinc-500">Invalidation Rule</p>
-                  <p className="text-xs text-zinc-300">{signal.plan.invalidation}</p>
-                </div>
-              </div>
+              </>
             ) : null}
 
-            {signal.requiredChecks.length ? (
-              <div className="mt-2 rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+            <div className="grid gap-3 lg:grid-cols-2">
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
                 <p className="text-[10px] uppercase tracking-wide text-zinc-500">Required Checks Before Execution</p>
-                <ul className="mt-1 space-y-1 text-xs text-zinc-300">
+                <ul className="mt-2 space-y-1 text-xs text-zinc-300">
                   {signal.requiredChecks
                     .filter((item) => item.required)
                     .map((item) => (
                       <li key={item.key}>
-                        {item.passed ? 'PASS' : 'WAIT'} - {item.label}
+                        {item.passed ? 'PASS' : 'WAIT'} - {item.label} (w {item.weight})
                       </li>
                     ))}
                 </ul>
+                {signal.failedChecks.length ? (
+                  <p className="mt-2 text-xs text-terminal-amber">Open risks: {signal.failedChecks.join(' | ')}</p>
+                ) : null}
               </div>
-            ) : null}
+
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+                <p className="text-[10px] uppercase tracking-wide text-zinc-500">Support / Resistance Map</p>
+                <p className="mt-1 text-xs text-zinc-400">
+                  Nearest support: {signal.structure.nearestSupport ? `₹ ${formatMoney(signal.structure.nearestSupport)}` : '-'}
+                  {' | '}
+                  Nearest resistance: {signal.structure.nearestResistance ? `₹ ${formatMoney(signal.structure.nearestResistance)}` : '-'}
+                </p>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-terminal-green">Supports</p>
+                    <ul className="mt-1 space-y-1 text-xs text-zinc-300">
+                      {signal.structure.supportLevels.length ? (
+                        signal.structure.supportLevels.map((level, index) => (
+                          <li key={`support-${index}`}>
+                            S{index + 1}: ₹ {formatMoney(level.price)} ({level.touches}x, {formatPercent(level.distancePct)})
+                          </li>
+                        ))
+                      ) : (
+                        <li>-</li>
+                      )}
+                    </ul>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-terminal-red">Resistances</p>
+                    <ul className="mt-1 space-y-1 text-xs text-zinc-300">
+                      {signal.structure.resistanceLevels.length ? (
+                        signal.structure.resistanceLevels.map((level, index) => (
+                          <li key={`resistance-${index}`}>
+                            R{index + 1}: ₹ {formatMoney(level.price)} ({level.touches}x, {formatPercent(level.distancePct)})
+                          </li>
+                        ))
+                      ) : (
+                        <li>-</li>
+                      )}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+              <p className="text-[10px] uppercase tracking-wide text-zinc-500">Prediction Tracking and Self-Improvement</p>
+              <div className="mt-2 grid gap-2 sm:grid-cols-4">
+                <p className="text-xs text-zinc-300">Sample: <span className="font-mono text-zinc-100">{signal.performance.sampleSize}</span></p>
+                <p className="text-xs text-zinc-300">Win Rate: <span className="font-mono text-zinc-100">{formatPercent(signal.performance.winRatePct)}</span></p>
+                <p className="text-xs text-zinc-300">Avg Accuracy: <span className="font-mono text-zinc-100">{formatPercent(signal.performance.averageAccuracyPct)}</span></p>
+                <p className="text-xs text-zinc-300">Recent 10: <span className="font-mono text-zinc-100">{formatPercent(signal.performance.recentWinRatePct)}</span></p>
+              </div>
+              <p className="mt-2 text-xs text-zinc-500">{signal.performance.note}</p>
+            </div>
+
+            <div className="rounded-lg border border-zinc-800 bg-black/50 p-3">
+              <p className="text-[10px] uppercase tracking-wide text-zinc-500">Signal Basis</p>
+              <ul className="mt-2 space-y-1 text-xs text-zinc-300">
+                {signal.reasons.map((reason, index) => (
+                  <li key={`reason-${index}`}>• {reason}</li>
+                ))}
+              </ul>
+            </div>
           </>
         ) : (
           <p className="text-sm text-zinc-500">Signal unavailable for the selected symbol.</p>
         )}
         <p className="text-xs text-zinc-500">
-          Signals for analysis only. Not financial advice. Past performance ≠ future results.
+          Signals are probabilistic and risk-managed. Use position sizing and stop discipline on every trade.
         </p>
       </section>
 
@@ -515,6 +666,13 @@ export function ChartDeskTerminalPage() {
           </button>
           <button type="button" onClick={() => setShowVwap((prev) => !prev)} className={showVwap ? 'terminal-btn-primary' : 'terminal-btn'}>
             VWAP {showVwap ? '●' : '○'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowStructure((prev) => !prev)}
+            className={showStructure ? 'terminal-btn-primary' : 'terminal-btn'}
+          >
+            S/R Levels {showStructure ? '●' : '○'}
           </button>
           <button type="button" onClick={() => void loadData()} className="terminal-btn ml-auto">
             {loading ? 'Refreshing...' : 'Refresh'}

@@ -17,7 +17,10 @@ import {
   SignalNotebookOutcome,
   SignalNotebookPayload,
   SignalNotebookSummaryDto,
+  SignalMarketStructure,
+  SignalPerformanceStats,
   SignalTradePlan,
+  TradingSignalConfidence,
   TradingSignalKind,
   TradingSignalResult,
 } from './signal.types';
@@ -51,8 +54,13 @@ const SIGNAL_MIN_QUALITY_GAP = 12;
 const SIGNAL_MIN_TREND_DISTANCE_PCT = 0.0022;
 const SIGNAL_WHIPSAW_WINDOW_MS = 20 * 60 * 1000;
 const SIGNAL_REVERSAL_OVERRIDE_QUALITY = 88;
+const PERFORMANCE_CACHE_TTL_MS = 5 * 60 * 1000;
 const TARGET_RISK_MULTIPLIER = 2.2;
+const MIN_TARGET_RISK_MULTIPLIER = 1.35;
 const MIN_STOP_DISTANCE_PCT = 0.012;
+const STRUCTURE_LEVEL_TOLERANCE_PCT = 0.006;
+const STRUCTURE_MAX_LEVELS = 3;
+const STRUCTURE_LOOKBACK_CANDLES = 180;
 const NOTEBOOK_DEFAULT_LIMIT = 45;
 const NOTEBOOK_MAX_LIMIT = 140;
 const NEPAL_TIME_ZONE = 'Asia/Kathmandu';
@@ -97,10 +105,16 @@ interface SignalCandleSelection {
   candles: OhlcCandleDto[];
 }
 
+interface PerformanceCacheItem {
+  fetchedAt: number;
+  stats: SignalPerformanceStats;
+}
+
 @Injectable()
 export class SignalService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SignalService.name);
   private readonly signalCache = new Map<string, { fetchedAt: number; result: TradingSignalResult }>();
+  private readonly performanceCache = new Map<string, PerformanceCacheItem>();
   private readonly stabilityCache = new Map<
     string,
     { signal: Exclude<TradingSignalKind, 'HOLD'>; qualityScore: number; at: number }
@@ -214,14 +228,24 @@ export class SignalService implements OnModuleInit, OnModuleDestroy {
           })
         : undefined;
 
+    const structure = this.buildMarketStructure(
+      candles,
+      data.close,
+      data.ema8,
+      data.ema21,
+    );
+
     const rawResult = this.calculateTradingSignal(
       data,
       prevData,
+      structure,
       selection.interval,
       new Date(now).toISOString(),
     );
 
-    const result = this.applySignalStabilityFilter(normalizedSymbol, rawResult, now);
+    const calibratedResult = await this.applyPerformanceCalibration(normalizedSymbol, rawResult);
+
+    const result = this.applySignalStabilityFilter(normalizedSymbol, calibratedResult, now);
 
     this.signalCache.set(normalizedSymbol, {
       fetchedAt: now,
@@ -512,6 +536,21 @@ export class SignalService implements OnModuleInit, OnModuleDestroy {
         volume: this.toFiniteOrZero(data?.volume),
         avgVolume20: this.toFiniteOrZero(data?.avgVolume20),
       },
+      structure: {
+        trendBias: 'RANGE',
+        nearestSupport: null,
+        nearestResistance: null,
+        supportLevels: [],
+        resistanceLevels: [],
+      },
+      performance: {
+        sampleSize: 0,
+        winRatePct: 0,
+        averageAccuracyPct: 0,
+        recentWinRatePct: 0,
+        calibrationAdjustment: 0,
+        note: 'No evaluated history yet for this symbol.',
+      },
       interval,
       generatedAt,
     };
@@ -526,6 +565,7 @@ export class SignalService implements OnModuleInit, OnModuleDestroy {
   private calculateTradingSignal(
     data: SignalInputData,
     prevData: SignalInputData | undefined,
+    structure: SignalMarketStructure,
     interval: SignalInterval,
     generatedAt: string,
   ): TradingSignalResult {
@@ -789,14 +829,7 @@ export class SignalService implements OnModuleInit, OnModuleDestroy {
           ? sellQuality
           : Math.max(buyQuality, sellQuality);
 
-    const confidence =
-      signal === 'HOLD'
-        ? 'LOW'
-        : qualityScore >= 82 || strength >= TRADING_SIGNALS.BUY_HIGH
-          ? 'HIGH'
-          : qualityScore >= 68 || strength >= TRADING_SIGNALS.BUY_MEDIUM
-            ? 'MEDIUM'
-            : 'LOW';
+    const confidence = this.deriveConfidence(signal, qualityScore, strength);
 
     const failedChecks = selectedChecks
       .filter((item) => item.required && !item.passed)
@@ -809,9 +842,10 @@ export class SignalService implements OnModuleInit, OnModuleDestroy {
       failedChecks,
       buyQuality,
       sellQuality,
+      structure,
     );
 
-    const plan = signal === 'HOLD' ? null : this.buildTradePlan(signal, data);
+    const plan = signal === 'HOLD' ? null : this.buildTradePlan(signal, data, structure);
 
     return {
       signal,
@@ -835,6 +869,15 @@ export class SignalService implements OnModuleInit, OnModuleDestroy {
         vwap: this.round4(data.vwap),
         volume: this.round4(data.volume),
         avgVolume20: this.round4(data.avgVolume20),
+      },
+      structure,
+      performance: {
+        sampleSize: 0,
+        winRatePct: 0,
+        averageAccuracyPct: 0,
+        recentWinRatePct: 0,
+        calibrationAdjustment: 0,
+        note: 'Performance calibration pending history load.',
       },
       interval,
       generatedAt,
@@ -903,6 +946,266 @@ export class SignalService implements OnModuleInit, OnModuleDestroy {
     return result;
   }
 
+  private async applyPerformanceCalibration(
+    symbol: string,
+    result: TradingSignalResult,
+  ): Promise<TradingSignalResult> {
+    const stats = await this.getPerformanceStats(symbol);
+
+    if (result.signal === 'HOLD') {
+      return {
+        ...result,
+        performance: stats,
+      };
+    }
+
+    const calibratedQuality = this.clamp(
+      this.round2(result.qualityScore + stats.calibrationAdjustment),
+      0,
+      100,
+    );
+
+    const confidence = this.deriveConfidence(result.signal, calibratedQuality, result.strength);
+    const minimumGate = result.signal === 'BUY' ? SIGNAL_BUY_QUALITY_GATE : SIGNAL_SELL_QUALITY_GATE;
+
+    if (
+      stats.sampleSize >= 10 &&
+      stats.calibrationAdjustment < 0 &&
+      calibratedQuality < minimumGate
+    ) {
+      return {
+        ...result,
+        signal: 'HOLD',
+        confidence: 'LOW',
+        qualityScore: calibratedQuality,
+        plan: null,
+        recommendedAction: 'WAIT',
+        reasons: [
+          `Historical calibration blocked ${result.signal}: recent prediction consistency is weak for this symbol.`,
+          ...result.reasons.slice(0, 2),
+        ],
+        failedChecks: [...result.failedChecks, 'Performance calibration gate (symbol-level)'],
+        performance: stats,
+      };
+    }
+
+    return {
+      ...result,
+      confidence,
+      qualityScore: calibratedQuality,
+      recommendedAction: this.getAction(result.signal, result.strength, calibratedQuality),
+      reasons: [
+        ...result.reasons,
+        `Model tracking: win ${stats.winRatePct.toFixed(1)}%, avg accuracy ${stats.averageAccuracyPct.toFixed(1)}% (${stats.sampleSize} evaluated).`,
+      ].slice(0, 6),
+      performance: stats,
+    };
+  }
+
+  private async getPerformanceStats(symbol: string): Promise<SignalPerformanceStats> {
+    const now = Date.now();
+    const cached = this.performanceCache.get(symbol);
+    if (cached && now - cached.fetchedAt < PERFORMANCE_CACHE_TTL_MS) {
+      return cached.stats;
+    }
+
+    const rows: Array<{ outcome: string; accuracyScore: unknown }> = await this.prisma.signalNotebookEntry.findMany({
+      where: {
+        symbol,
+        evaluatedAt: { not: null },
+        accuracyScore: { not: null },
+      },
+      orderBy: { generatedAt: 'desc' },
+      take: 60,
+      select: {
+        outcome: true,
+        accuracyScore: true,
+      },
+    });
+
+    const sampleSize = rows.length;
+    if (!sampleSize) {
+      const stats: SignalPerformanceStats = {
+        sampleSize: 0,
+        winRatePct: 0,
+        averageAccuracyPct: 0,
+        recentWinRatePct: 0,
+        calibrationAdjustment: 0,
+        note: 'No evaluated history yet for this symbol.',
+      };
+
+      this.performanceCache.set(symbol, { fetchedAt: now, stats });
+      return stats;
+    }
+
+    const wins = rows.filter((row: { outcome: string }) => this.isWinningOutcome(row.outcome)).length;
+    const winRatePct = (wins / sampleSize) * 100;
+
+    const avgAccuracy =
+      rows.reduce((sum: number, row: { accuracyScore: unknown }) => sum + this.toNumber(row.accuracyScore), 0) /
+      sampleSize;
+
+    const recentRows = rows.slice(0, Math.min(10, sampleSize));
+    const recentWins = recentRows.filter((row: { outcome: string }) => this.isWinningOutcome(row.outcome)).length;
+    const recentWinRatePct = recentRows.length > 0 ? (recentWins / recentRows.length) * 100 : winRatePct;
+
+    const rawAdjustment =
+      sampleSize < 8
+        ? 0
+        : (recentWinRatePct - 50) / 6 + (avgAccuracy - 50) / 16;
+    const calibrationAdjustment = this.round2(this.clamp(rawAdjustment, -10, 8));
+
+    const note =
+      sampleSize < 8
+        ? 'Calibration inactive: waiting for larger evaluated sample.'
+        : calibrationAdjustment >= 2
+          ? 'Historical performance supports normal aggression.'
+          : calibrationAdjustment <= -2
+            ? 'Historical performance weak; signal gate tightened for protection.'
+            : 'Historical performance neutral; standard quality gate applied.';
+
+    const stats: SignalPerformanceStats = {
+      sampleSize,
+      winRatePct: this.round2(winRatePct),
+      averageAccuracyPct: this.round2(avgAccuracy),
+      recentWinRatePct: this.round2(recentWinRatePct),
+      calibrationAdjustment,
+      note,
+    };
+
+    this.performanceCache.set(symbol, { fetchedAt: now, stats });
+    return stats;
+  }
+
+  private isWinningOutcome(outcome: string): boolean {
+    return outcome === 'HIT_TARGET' || outcome === 'MOVED_IN_FAVOR';
+  }
+
+  private buildMarketStructure(
+    candles: OhlcCandleDto[],
+    currentClose: number,
+    ema8: number,
+    ema21: number,
+  ): SignalMarketStructure {
+    const lookback = candles.slice(Math.max(0, candles.length - STRUCTURE_LOOKBACK_CANDLES));
+
+    if (lookback.length < 12 || !Number.isFinite(currentClose) || currentClose <= 0) {
+      return {
+        trendBias: ema8 > ema21 ? 'BULLISH' : ema8 < ema21 ? 'BEARISH' : 'RANGE',
+        nearestSupport: null,
+        nearestResistance: null,
+        supportLevels: [],
+        resistanceLevels: [],
+      };
+    }
+
+    const pivotLows: number[] = [];
+    const pivotHighs: number[] = [];
+
+    for (let i = 2; i < lookback.length - 2; i += 1) {
+      const low = lookback[i].l;
+      const high = lookback[i].h;
+
+      const isPivotLow =
+        low <= lookback[i - 1].l &&
+        low <= lookback[i - 2].l &&
+        low < lookback[i + 1].l &&
+        low < lookback[i + 2].l;
+
+      const isPivotHigh =
+        high >= lookback[i - 1].h &&
+        high >= lookback[i - 2].h &&
+        high > lookback[i + 1].h &&
+        high > lookback[i + 2].h;
+
+      if (isPivotLow) {
+        pivotLows.push(low);
+      }
+
+      if (isPivotHigh) {
+        pivotHighs.push(high);
+      }
+    }
+
+    const supportLevels = this.clusterStructureLevels(pivotLows, currentClose, 'support');
+    const resistanceLevels = this.clusterStructureLevels(pivotHighs, currentClose, 'resistance');
+
+    const nearestSupport = supportLevels
+      .filter((level) => level.price <= currentClose)
+      .sort((a, b) => b.price - a.price)[0]?.price ?? null;
+
+    const nearestResistance = resistanceLevels
+      .filter((level) => level.price >= currentClose)
+      .sort((a, b) => a.price - b.price)[0]?.price ?? null;
+
+    const trendBias = ema8 > ema21 ? 'BULLISH' : ema8 < ema21 ? 'BEARISH' : 'RANGE';
+
+    return {
+      trendBias,
+      nearestSupport: nearestSupport === null ? null : this.round4(nearestSupport),
+      nearestResistance: nearestResistance === null ? null : this.round4(nearestResistance),
+      supportLevels,
+      resistanceLevels,
+    };
+  }
+
+  private clusterStructureLevels(
+    levels: number[],
+    currentClose: number,
+    type: 'support' | 'resistance',
+  ): Array<{ price: number; touches: number; distancePct: number }> {
+    if (!levels.length || !Number.isFinite(currentClose) || currentClose <= 0) {
+      return [];
+    }
+
+    const sorted = [...levels].sort((a, b) => a - b);
+    const groups: Array<{ sum: number; count: number }> = [];
+
+    for (const level of sorted) {
+      const last = groups[groups.length - 1];
+      if (!last) {
+        groups.push({ sum: level, count: 1 });
+        continue;
+      }
+
+      const mean = last.sum / last.count;
+      const tolerance = Math.max(mean * STRUCTURE_LEVEL_TOLERANCE_PCT, currentClose * 0.0025);
+
+      if (Math.abs(level - mean) <= tolerance) {
+        last.sum += level;
+        last.count += 1;
+      } else {
+        groups.push({ sum: level, count: 1 });
+      }
+    }
+
+    const clustered = groups
+      .map((group) => {
+        const price = group.sum / group.count;
+        return {
+          price,
+          touches: group.count,
+          distancePct: Math.abs((price - currentClose) / currentClose) * 100,
+        };
+      })
+      .filter((level) => (type === 'support' ? level.price <= currentClose * 1.002 : level.price >= currentClose * 0.998))
+      .sort((a, b) => {
+        if (type === 'support') {
+          return b.price - a.price;
+        }
+
+        return a.price - b.price;
+      })
+      .slice(0, STRUCTURE_MAX_LEVELS)
+      .map((level) => ({
+        price: this.round4(level.price),
+        touches: level.touches,
+        distancePct: this.round2(level.distancePct),
+      }));
+
+    return clustered;
+  }
+
   private buildReasons(
     signal: TradingSignalKind,
     buyReasons: string[],
@@ -910,11 +1213,20 @@ export class SignalService implements OnModuleInit, OnModuleDestroy {
     failedChecks: string[],
     buyQuality: number,
     sellQuality: number,
+    structure: SignalMarketStructure,
   ): string[] {
+    const supportText =
+      structure.nearestSupport !== null ? `Nearest support ${this.round4(structure.nearestSupport)}` : 'Support still forming';
+    const resistanceText =
+      structure.nearestResistance !== null
+        ? `Nearest resistance ${this.round4(structure.nearestResistance)}`
+        : 'Resistance still forming';
+
     if (signal === 'BUY') {
       return [
         ...buyReasons,
         `Quality score ${buyQuality.toFixed(1)}% passed minimum execution gate.`,
+        `${supportText}; ${resistanceText}.`,
         'Use plan levels and only execute if risk controls are respected.',
       ];
     }
@@ -923,6 +1235,7 @@ export class SignalService implements OnModuleInit, OnModuleDestroy {
       return [
         ...sellReasons,
         `Quality score ${sellQuality.toFixed(1)}% passed minimum execution gate.`,
+        `${supportText}; ${resistanceText}.`,
         'NEPSE cash market context: SELL means exit/reduce existing holdings, not short selling.',
       ];
     }
@@ -962,6 +1275,24 @@ export class SignalService implements OnModuleInit, OnModuleDestroy {
     return actions.LOW;
   }
 
+  private deriveConfidence(
+    signal: TradingSignalKind,
+    qualityScore: number,
+    strength: number,
+  ): TradingSignalConfidence {
+    if (signal === 'HOLD') return 'LOW';
+
+    if (qualityScore >= 82 || strength >= TRADING_SIGNALS.BUY_HIGH) {
+      return 'HIGH';
+    }
+
+    if (qualityScore >= 68 || strength >= TRADING_SIGNALS.BUY_MEDIUM) {
+      return 'MEDIUM';
+    }
+
+    return 'LOW';
+  }
+
   private calculateQualityScore(checks: SignalCheckItem[]): number {
     const totalWeight = checks.reduce((sum, item) => sum + item.weight, 0);
     if (totalWeight <= 0) return 0;
@@ -973,7 +1304,11 @@ export class SignalService implements OnModuleInit, OnModuleDestroy {
     return this.round2((passedWeight / totalWeight) * 100);
   }
 
-  private buildTradePlan(signal: Exclude<TradingSignalKind, 'HOLD'>, data: SignalInputData): SignalTradePlan {
+  private buildTradePlan(
+    signal: Exclude<TradingSignalKind, 'HOLD'>,
+    data: SignalInputData,
+    structure: SignalMarketStructure,
+  ): SignalTradePlan {
     const hasValidBands =
       Number.isFinite(data.bbLower) && Number.isFinite(data.bbUpper) && data.bbUpper > data.bbLower;
 
@@ -982,53 +1317,89 @@ export class SignalService implements OnModuleInit, OnModuleDestroy {
       : data.close * 0.025;
 
     const minimumRisk = data.close * MIN_STOP_DISTANCE_PCT;
+    const entryPrice = data.close;
 
     if (signal === 'BUY') {
+      const baseSupport =
+        structure.nearestSupport ??
+        Math.min(data.ema21, data.ema20, data.vwap, entryPrice - halfBandRange * 0.75);
+
       const structuralStop = Math.min(
-        data.ema21,
-        data.ema20,
-        data.vwap,
-        data.close - halfBandRange * 0.75,
+        baseSupport * (1 - 0.0035),
+        data.ema21 * (1 - 0.002),
+        entryPrice - halfBandRange * 0.6,
       );
 
-      const riskPerShare = Math.max(minimumRisk, data.close - structuralStop);
-      const stopLoss = data.close - riskPerShare;
-      const rewardPerShare = riskPerShare * TARGET_RISK_MULTIPLIER;
-      const targetPrice = data.close + rewardPerShare;
+      const riskPerShare = Math.max(minimumRisk, entryPrice - structuralStop);
+      const stopLoss = entryPrice - riskPerShare;
+
+      const tp1Base =
+        structure.nearestResistance && structure.nearestResistance > entryPrice
+          ? structure.nearestResistance
+          : entryPrice + riskPerShare * MIN_TARGET_RISK_MULTIPLIER;
+      const takeProfit1 = Math.max(tp1Base, entryPrice + riskPerShare * MIN_TARGET_RISK_MULTIPLIER);
+
+      const nextResistance = structure.resistanceLevels.find((level) => level.price > takeProfit1 * 1.003)?.price;
+      const tp2Base = nextResistance ?? entryPrice + riskPerShare * TARGET_RISK_MULTIPLIER;
+      const takeProfit2 = Math.max(tp2Base, takeProfit1 + riskPerShare * 0.55);
+      const targetPrice = takeProfit2;
+
+      const rewardPerShare = targetPrice - entryPrice;
+      const trailingStop = Math.max(stopLoss, entryPrice + (takeProfit1 - entryPrice) * 0.35);
 
       return {
-        entryPrice: this.round4(data.close),
+        entryPrice: this.round4(entryPrice),
         stopLoss: this.round4(stopLoss),
         targetPrice: this.round4(targetPrice),
+        takeProfit1: this.round4(takeProfit1),
+        takeProfit2: this.round4(takeProfit2),
+        trailingStop: this.round4(trailingStop),
         riskPerShare: this.round4(riskPerShare),
         rewardPerShare: this.round4(rewardPerShare),
         riskReward: this.round2(rewardPerShare / riskPerShare),
-        expectedMovePct: this.round2((rewardPerShare / data.close) * 100),
-        invalidation: 'Invalidate BUY if price closes below stop-loss or momentum breaks under EMA21/VWAP.',
+        expectedMovePct: this.round2((rewardPerShare / entryPrice) * 100),
+        invalidation: `Invalidate BUY if price closes below ${this.round4(stopLoss)} and loses support control.`,
+        primaryExitRule: `Take partial around ${this.round4(takeProfit1)} (first resistance), trail remainder toward ${this.round4(takeProfit2)}.`,
+        exitRationale:
+          'Targets are anchored to resistance structure. Lock gains near first resistance, then trail if momentum persists.',
       };
     }
 
-    const reclaimLevel = Math.max(
-      data.ema21,
-      data.ema20,
-      data.vwap,
-      data.close + halfBandRange * 0.75,
-    );
-    const riskPerShare = Math.max(minimumRisk, reclaimLevel - data.close);
-    const riskLine = data.close + riskPerShare;
-    const avoidableDownside = riskPerShare * TARGET_RISK_MULTIPLIER;
-    const supportZone = Math.max(0.01, data.close - avoidableDownside);
+    const baseResistance =
+      structure.nearestResistance ??
+      Math.max(data.ema21, data.ema20, data.vwap, entryPrice + halfBandRange * 0.75);
+    const riskLine = Math.max(baseResistance * 1.0035, entryPrice + minimumRisk);
+    const riskPerShare = Math.max(minimumRisk, riskLine - entryPrice);
+
+    const support1Base =
+      structure.nearestSupport && structure.nearestSupport < entryPrice
+        ? structure.nearestSupport
+        : entryPrice - riskPerShare * MIN_TARGET_RISK_MULTIPLIER;
+    const takeProfit1 = Math.min(support1Base, entryPrice - riskPerShare * MIN_TARGET_RISK_MULTIPLIER);
+
+    const deeperSupport = structure.supportLevels.find((level) => level.price < takeProfit1 * 0.997)?.price;
+    const support2Base = deeperSupport ?? entryPrice - riskPerShare * TARGET_RISK_MULTIPLIER;
+    const takeProfit2 = Math.min(support2Base, takeProfit1 - riskPerShare * 0.55);
+    const targetPrice = Math.max(0.01, takeProfit2);
+
+    const rewardPerShare = entryPrice - targetPrice;
+    const trailingStop = Math.min(riskLine, entryPrice + riskPerShare * 0.45);
 
     return {
-      entryPrice: this.round4(data.close),
+      entryPrice: this.round4(entryPrice),
       stopLoss: this.round4(riskLine),
-      targetPrice: this.round4(supportZone),
+      targetPrice: this.round4(targetPrice),
+      takeProfit1: this.round4(takeProfit1),
+      takeProfit2: this.round4(targetPrice),
+      trailingStop: this.round4(trailingStop),
       riskPerShare: this.round4(riskPerShare),
-      rewardPerShare: this.round4(avoidableDownside),
-      riskReward: this.round2(avoidableDownside / riskPerShare),
-      expectedMovePct: this.round2((avoidableDownside / data.close) * 100),
-      invalidation:
-        'Invalidate SELL-exit if price reclaims risk line and regains EMA21/VWAP trend control (no short-selling assumption).',
+      rewardPerShare: this.round4(rewardPerShare),
+      riskReward: this.round2(rewardPerShare / riskPerShare),
+      expectedMovePct: this.round2((rewardPerShare / entryPrice) * 100),
+      invalidation: `Invalidate SELL-exit if price reclaims ${this.round4(riskLine)} and trend control returns bullish.`,
+      primaryExitRule: `Reduce near ${this.round4(takeProfit1)} support, and de-risk deeper toward ${this.round4(targetPrice)} if pressure persists.`,
+      exitRationale:
+        'SELL in NEPSE means exit/reduce existing holdings. Support levels define staged exits rather than short entries.',
     };
   }
 
@@ -1301,6 +1672,10 @@ export class SignalService implements OnModuleInit, OnModuleDestroy {
 
   private round4(value: number): number {
     return Number(value.toFixed(4));
+  }
+
+  private clamp(value: number, min: number, max: number): number {
+    return Math.min(max, Math.max(min, value));
   }
 
   private buildSignalInput(row: {

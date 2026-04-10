@@ -29,11 +29,39 @@ export interface SignalTradePlan {
   entryPrice: number;
   stopLoss: number;
   targetPrice: number;
+  takeProfit1: number;
+  takeProfit2: number;
+  trailingStop: number;
   riskPerShare: number;
   rewardPerShare: number;
   riskReward: number;
   expectedMovePct: number;
   invalidation: string;
+  primaryExitRule: string;
+  exitRationale: string;
+}
+
+export interface SignalStructureLevel {
+  price: number;
+  touches: number;
+  distancePct: number;
+}
+
+export interface SignalMarketStructure {
+  trendBias: 'BULLISH' | 'BEARISH' | 'RANGE';
+  nearestSupport: number | null;
+  nearestResistance: number | null;
+  supportLevels: SignalStructureLevel[];
+  resistanceLevels: SignalStructureLevel[];
+}
+
+export interface SignalPerformanceStats {
+  sampleSize: number;
+  winRatePct: number;
+  averageAccuracyPct: number;
+  recentWinRatePct: number;
+  calibrationAdjustment: number;
+  note: string;
 }
 
 export interface SignalPriceContext {
@@ -61,6 +89,8 @@ export interface TradingSignalResult {
   requiredChecks: SignalCheckItem[];
   failedChecks: string[];
   priceContext: SignalPriceContext;
+  structure: SignalMarketStructure;
+  performance: SignalPerformanceStats;
   interval: SignalInterval;
   generatedAt: string;
 }
