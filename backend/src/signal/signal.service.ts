@@ -40,20 +40,22 @@ const SIGNAL_INTERVAL_CANDIDATES: ReadonlyArray<{
   limit: number;
   minCandles: number;
 }> = [
-  { interval: '1m', limit: 220, minCandles: 80 },
-  { interval: '5m', limit: 260, minCandles: 80 },
-  { interval: '15m', limit: 260, minCandles: 80 },
-  { interval: '1h', limit: 320, minCandles: 80 },
-  { interval: '1d', limit: 320, minCandles: 60 },
+  { interval: '1d', limit: 320, minCandles: 70 },
+  { interval: '1h', limit: 320, minCandles: 110 },
+  { interval: '15m', limit: 300, minCandles: 130 },
+  { interval: '5m', limit: 280, minCandles: 140 },
+  { interval: '1m', limit: 240, minCandles: 160 },
 ];
 
 const SIGNAL_CACHE_TTL_MS = 10_000;
-const SIGNAL_BUY_QUALITY_GATE = 74;
-const SIGNAL_SELL_QUALITY_GATE = 78;
-const SIGNAL_MIN_QUALITY_GAP = 12;
+const SIGNAL_BUY_QUALITY_GATE = 80;
+const SIGNAL_SELL_QUALITY_GATE = 82;
+const SIGNAL_MIN_QUALITY_GAP = 14;
 const SIGNAL_MIN_TREND_DISTANCE_PCT = 0.0022;
 const SIGNAL_WHIPSAW_WINDOW_MS = 20 * 60 * 1000;
 const SIGNAL_REVERSAL_OVERRIDE_QUALITY = 88;
+const SIGNAL_REVERSAL_LOCK_HOURS = 48;
+const SIGNAL_REVERSAL_FORCE_QUALITY = 92;
 const PERFORMANCE_CACHE_TTL_MS = 5 * 60 * 1000;
 const TARGET_RISK_MULTIPLIER = 2.2;
 const MIN_TARGET_RISK_MULTIPLIER = 1.35;
@@ -245,7 +247,8 @@ export class SignalService implements OnModuleInit, OnModuleDestroy {
 
     const calibratedResult = await this.applyPerformanceCalibration(normalizedSymbol, rawResult);
 
-    const result = this.applySignalStabilityFilter(normalizedSymbol, calibratedResult, now);
+    const stabilizedResult = this.applySignalStabilityFilter(normalizedSymbol, calibratedResult, now);
+    const result = await this.applyNepseSwingGuard(normalizedSymbol, stabilizedResult);
 
     this.signalCache.set(normalizedSymbol, {
       fetchedAt: now,
@@ -946,6 +949,56 @@ export class SignalService implements OnModuleInit, OnModuleDestroy {
     return result;
   }
 
+  private async applyNepseSwingGuard(
+    symbol: string,
+    result: TradingSignalResult,
+  ): Promise<TradingSignalResult> {
+    if (result.signal === 'HOLD') {
+      return result;
+    }
+
+    const latest = await this.prisma.signalNotebookEntry.findFirst({
+      where: {
+        symbol,
+        signal: { in: ['BUY', 'SELL'] },
+      },
+      orderBy: { generatedAt: 'desc' },
+      select: {
+        signal: true,
+        generatedAt: true,
+      },
+    });
+
+    if (!latest) {
+      return result;
+    }
+
+    const hoursSinceLastSignal = (Date.now() - latest.generatedAt.getTime()) / (1000 * 60 * 60);
+    const reversalDetected = latest.signal !== result.signal;
+
+    if (
+      reversalDetected &&
+      hoursSinceLastSignal < SIGNAL_REVERSAL_LOCK_HOURS &&
+      result.qualityScore < SIGNAL_REVERSAL_FORCE_QUALITY
+    ) {
+      return {
+        ...result,
+        signal: 'HOLD',
+        confidence: 'LOW',
+        plan: null,
+        recommendedAction: 'WAIT FOR NEXT SESSION CLOSE CONFIRMATION',
+        reasons: [
+          `Swing guard blocked rapid ${latest.signal} -> ${result.signal} reversal within ${SIGNAL_REVERSAL_LOCK_HOURS}h window.`,
+          'NEPSE is treated as non-intraday swing flow, so opposite signal requires stronger confirmation.',
+          ...result.reasons.slice(0, 2),
+        ],
+        failedChecks: [...result.failedChecks, 'NEPSE swing reversal lock'],
+      };
+    }
+
+    return result;
+  }
+
   private async applyPerformanceCalibration(
     symbol: string,
     result: TradingSignalResult,
@@ -1259,9 +1312,18 @@ export class SignalService implements OnModuleInit, OnModuleDestroy {
     if (signal === 'HOLD') return 'WAIT';
 
     const actions = {
-      HIGH: signal === 'BUY' ? 'ENTER LONG WITH FULL PLAN' : 'EXIT / REDUCE LONG HOLDINGS NOW',
-      MEDIUM: signal === 'BUY' ? 'ENTER LONG WITH REDUCED SIZE' : 'TRIM HOLDINGS AND PROTECT CAPITAL',
-      LOW: signal === 'BUY' ? 'WATCH FOR BETTER BUY SETUP' : 'WATCH FOR BETTER SELL SETUP',
+      HIGH:
+        signal === 'BUY'
+          ? 'PLAN BUY SWING ENTRY (STAGED), REVIEW AT SESSION CLOSE'
+          : 'PLAN EXIT / REDUCE HOLDINGS (STAGED), REVIEW AT SESSION CLOSE',
+      MEDIUM:
+        signal === 'BUY'
+          ? 'WATCHLIST BUY SETUP, ENTER ONLY WITH STRICT RISK'
+          : 'WATCHLIST EXIT SETUP, REDUCE RISK IF PRICE WEAKENS',
+      LOW:
+        signal === 'BUY'
+          ? 'WAIT FOR CLEANER BUY CONFIRMATION'
+          : 'WAIT FOR CLEANER EXIT CONFIRMATION',
     };
 
     if (qualityScore >= 80 || strength >= 5) {

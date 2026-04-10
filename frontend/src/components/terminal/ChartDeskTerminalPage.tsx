@@ -9,8 +9,8 @@ import { IndicatorsResponse, TradingSignalResponse, WatchlistApiRow } from '../.
 const INTERVALS = ['1m', '5m', '15m', '1h', '1d'] as const;
 type Interval = (typeof INTERVALS)[number];
 
-const CHART_REFRESH_INTERVAL_MS = 15_000;
-const SIGNAL_REFRESH_INTERVAL_MS = 10_000;
+const CHART_REFRESH_INTERVAL_MS = 60_000;
+const SIGNAL_REFRESH_INTERVAL_MS = 60_000;
 
 function formatMoney(value: number): string {
   return new Intl.NumberFormat('en-IN', {
@@ -31,13 +31,28 @@ function formatPercent(value: number | null | undefined): string {
   return `${value.toFixed(2)}%`;
 }
 
+function readStoredValue(key: string, fallback: string): string {
+  if (typeof window === 'undefined') {
+    return fallback;
+  }
+
+  const raw = window.localStorage.getItem(key);
+  return raw && raw.trim() ? raw : fallback;
+}
+
+function actionabilityClass(label: 'EXECUTABLE' | 'WATCH' | 'BLOCKED'): string {
+  if (label === 'EXECUTABLE') return 'border-terminal-green/70 bg-terminal-green/15 text-terminal-green';
+  if (label === 'WATCH') return 'border-terminal-amber/70 bg-terminal-amber/15 text-terminal-amber';
+  return 'border-terminal-red/70 bg-terminal-red/15 text-terminal-red';
+}
+
 export function ChartDeskTerminalPage() {
   const { symbol: symbolParam } = useParams<{ symbol?: string }>();
   const navigate = useNavigate();
 
   const [watchlist, setWatchlist] = useState<WatchlistApiRow[]>([]);
   const [selectedSymbol, setSelectedSymbol] = useState(symbolParam?.toUpperCase() ?? '');
-  const [interval, setInterval] = useState<Interval>('15m');
+  const [interval, setInterval] = useState<Interval>('1d');
   const [showSma20, setShowSma20] = useState(false);
   const [showEma20, setShowEma20] = useState(true);
   const [showBollinger, setShowBollinger] = useState(true);
@@ -45,10 +60,20 @@ export function ChartDeskTerminalPage() {
   const [showStructure, setShowStructure] = useState(true);
   const [payload, setPayload] = useState<IndicatorsResponse | null>(null);
   const [signal, setSignal] = useState<TradingSignalResponse | null>(null);
-  const [activeDataInterval, setActiveDataInterval] = useState<Interval>('15m');
+  const [activeDataInterval, setActiveDataInterval] = useState<Interval>('1d');
   const [historyHint, setHistoryHint] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [minQuality, setMinQuality] = useState(() => readStoredValue('chartdesk.minQuality', '82'));
+  const [minRiskReward, setMinRiskReward] = useState(() => readStoredValue('chartdesk.minRR', '1.8'));
+  const [minSampleSize, setMinSampleSize] = useState(() => readStoredValue('chartdesk.minSample', '10'));
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('chartdesk.minQuality', minQuality);
+    window.localStorage.setItem('chartdesk.minRR', minRiskReward);
+    window.localStorage.setItem('chartdesk.minSample', minSampleSize);
+  }, [minQuality, minRiskReward, minSampleSize]);
 
   useEffect(() => {
     fetchWatchlist()
@@ -401,6 +426,92 @@ export function ChartDeskTerminalPage() {
     [selectedSymbol, watchlist],
   );
 
+  const actionability = useMemo(() => {
+    const minQualityValue = Number(minQuality);
+    const minRiskRewardValue = Number(minRiskReward);
+    const minSampleValue = Number(minSampleSize);
+
+    if (!signal || !signal.plan || signal.signal === 'HOLD') {
+      return {
+        label: 'BLOCKED' as const,
+        score: 0,
+        reasons: ['No directional setup passed the base engine gate.'],
+      };
+    }
+
+    const reasons: string[] = [];
+    let score = 100;
+
+    if (Number.isFinite(minQualityValue) && signal.qualityScore < minQualityValue) {
+      reasons.push(`Quality ${signal.qualityScore.toFixed(1)}% is below your ${minQualityValue.toFixed(1)}% rule.`);
+      score -= 32;
+    }
+
+    if (Number.isFinite(minRiskRewardValue) && signal.plan.riskReward < minRiskRewardValue) {
+      reasons.push(`R:R ${signal.plan.riskReward.toFixed(2)} is below your ${minRiskRewardValue.toFixed(2)} rule.`);
+      score -= 26;
+    }
+
+    const missingRequired = signal.requiredChecks.filter((item) => item.required && !item.passed);
+    if (missingRequired.length) {
+      reasons.push(`${missingRequired.length} required checks are still failing.`);
+      score -= Math.min(28, missingRequired.length * 8);
+    }
+
+    if (
+      Number.isFinite(minSampleValue) &&
+      signal.performance.sampleSize < minSampleValue &&
+      signal.performance.sampleSize > 0
+    ) {
+      reasons.push(
+        `Prediction sample size ${signal.performance.sampleSize} is below your minimum ${Math.floor(minSampleValue)}.`,
+      );
+      score -= 12;
+    }
+
+    if (signal.signal === 'BUY' && signal.structure.nearestResistance !== null) {
+      const resistanceDistancePct =
+        ((signal.structure.nearestResistance - signal.plan.entryPrice) / signal.plan.entryPrice) * 100;
+      if (resistanceDistancePct < 1.2) {
+        reasons.push('Nearest resistance is too close to entry for a clean upside push.');
+        score -= 14;
+      }
+    }
+
+    if (signal.signal === 'SELL' && signal.structure.nearestSupport !== null) {
+      const supportDistancePct =
+        ((signal.plan.entryPrice - signal.structure.nearestSupport) / signal.plan.entryPrice) * 100;
+      if (supportDistancePct < 1.0) {
+        reasons.push('Nearest support is close; downside for exit may be limited unless pressure expands.');
+        score -= 10;
+      }
+    }
+
+    const normalizedScore = Math.max(0, Math.round(score));
+
+    if (normalizedScore >= 78 && reasons.length === 0) {
+      return {
+        label: 'EXECUTABLE' as const,
+        score: normalizedScore,
+        reasons: ['All your personal rules are satisfied. Setup is actionable with discipline.'],
+      };
+    }
+
+    if (normalizedScore >= 58) {
+      return {
+        label: 'WATCH' as const,
+        score: normalizedScore,
+        reasons: reasons.length ? reasons : ['Setup is close but not fully aligned with your profile.'],
+      };
+    }
+
+    return {
+      label: 'BLOCKED' as const,
+      score: normalizedScore,
+      reasons: reasons.length ? reasons : ['Setup does not pass your personal execution framework.'],
+    };
+  }, [minQuality, minRiskReward, minSampleSize, signal]);
+
   const changeSymbol = (symbol: string) => {
     setSelectedSymbol(symbol);
     navigate(`/chart-desk/${symbol}`);
@@ -437,6 +548,56 @@ export function ChartDeskTerminalPage() {
             </div>
 
             <p className="text-sm text-zinc-200">Recommended action: {signal.recommendedAction}</p>
+
+            <div className="grid gap-3 rounded-lg border border-zinc-800 bg-zinc-950/70 p-3 lg:grid-cols-[1.15fr_0.85fr]">
+              <div>
+                <p className="text-[10px] uppercase tracking-wide text-zinc-500">Personal Rule Profile (Self-Help)</p>
+                <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                  <label className="text-[11px] text-zinc-400">
+                    Min Quality %
+                    <input
+                      type="number"
+                      value={minQuality}
+                      onChange={(event) => setMinQuality(event.target.value)}
+                      className="terminal-input mt-1 font-mono"
+                    />
+                  </label>
+                  <label className="text-[11px] text-zinc-400">
+                    Min R:R
+                    <input
+                      type="number"
+                      value={minRiskReward}
+                      onChange={(event) => setMinRiskReward(event.target.value)}
+                      className="terminal-input mt-1 font-mono"
+                    />
+                  </label>
+                  <label className="text-[11px] text-zinc-400">
+                    Min Sample Size
+                    <input
+                      type="number"
+                      value={minSampleSize}
+                      onChange={(event) => setMinSampleSize(event.target.value)}
+                      className="terminal-input mt-1 font-mono"
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-zinc-800 bg-black/40 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[10px] uppercase tracking-wide text-zinc-500">Actionability</p>
+                  <span className={`rounded-md border px-2 py-1 text-[10px] font-semibold tracking-wide ${actionabilityClass(actionability.label)}`}>
+                    {actionability.label}
+                  </span>
+                </div>
+                <p className="mt-2 font-mono text-2xl text-white">{actionability.score}/100</p>
+                <ul className="mt-2 space-y-1 text-xs text-zinc-400">
+                  {actionability.reasons.slice(0, 2).map((reason, index) => (
+                    <li key={`rule-reason-${index}`}>• {reason}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
 
             <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
               <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
@@ -499,11 +660,14 @@ export function ChartDeskTerminalPage() {
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     <button
                       type="button"
-                      onClick={() =>
+                      onClick={() => {
+                        const activePlan = signal.plan;
+                        if (!activePlan) return;
+
                         navigate(
-                          `/execution?symbol=${encodeURIComponent(selectedSymbol)}&side=${signal.signal === 'BUY' ? 'buy' : 'sell'}`,
-                        )
-                      }
+                          `/execution?symbol=${encodeURIComponent(selectedSymbol)}&side=${signal.signal === 'BUY' ? 'buy' : 'sell'}&entry=${encodeURIComponent(String(activePlan.entryPrice))}&stop=${encodeURIComponent(String(activePlan.stopLoss))}&target=${encodeURIComponent(String(activePlan.takeProfit1))}`,
+                        );
+                      }}
                       className="terminal-btn"
                     >
                       Plan in Execution
@@ -681,6 +845,9 @@ export function ChartDeskTerminalPage() {
 
         {error ? <p className="text-sm font-medium text-terminal-red">{error}</p> : null}
         {historyHint ? <p className="text-xs text-terminal-amber">{historyHint}</p> : null}
+        <p className="text-xs text-zinc-500">
+          Swing mode enabled by default: focus on end-of-session quality and structure confirmation, not minute-by-minute flips.
+        </p>
       </section>
 
       <section className="terminal-card p-4">

@@ -234,9 +234,15 @@ export function CalculatorTerminalPage() {
   useEffect(() => {
     const symbolParam = searchParams.get('symbol')?.trim().toUpperCase();
     const sideParam = searchParams.get('side')?.trim().toLowerCase();
+    const entryParam = Number(searchParams.get('entry'));
+    const stopParam = Number(searchParams.get('stop'));
+    const targetParam = Number(searchParams.get('target'));
     const hasValidSide = sideParam === 'buy' || sideParam === 'sell';
+    const hasEntry = Number.isFinite(entryParam) && entryParam > 0;
+    const hasStop = Number.isFinite(stopParam) && stopParam > 0;
+    const hasTarget = Number.isFinite(targetParam) && targetParam > 0;
 
-    if (!symbolParam && !hasValidSide) {
+    if (!symbolParam && !hasValidSide && !hasEntry && !hasStop && !hasTarget) {
       return;
     }
 
@@ -250,14 +256,25 @@ export function CalculatorTerminalPage() {
       ...previous,
       side: hasValidSide ? (sideParam as Side) : previous.side,
       symbol: symbolParam ?? previous.symbol,
-      price: selected ? String(selected.ltp) : previous.price,
-      buyPrice: selected && !previous.buyPrice ? String(selected.ltp) : previous.buyPrice,
+      price: hasEntry ? String(entryParam) : selected ? String(selected.ltp) : previous.price,
+      buyPrice:
+        hasEntry
+          ? String(entryParam)
+          : selected && !previous.buyPrice
+            ? String(selected.ltp)
+            : previous.buyPrice,
+      stopLoss: hasStop ? String(stopParam) : previous.stopLoss,
+      targetPrice: hasTarget ? String(targetParam) : previous.targetPrice,
     }));
 
     setDecisionDraft((previous) => ({
       ...previous,
       side: hasValidSide ? ((sideParam === 'buy' ? 'BUY' : 'SELL') as ExecutionDecisionSide) : previous.side,
       symbol: symbolParam ?? previous.symbol,
+      plan:
+        hasEntry || hasStop || hasTarget
+          ? `Entry ${hasEntry ? entryParam : '-'} | Stop ${hasStop ? stopParam : '-'} | Target ${hasTarget ? targetParam : '-'}`
+          : previous.plan,
     }));
 
     setSearchParams({}, { replace: true });

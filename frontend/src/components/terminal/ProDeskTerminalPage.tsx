@@ -490,7 +490,7 @@ export function ProDeskTerminalPage() {
 
                   <div className="mt-2 flex flex-wrap gap-2">
                     <Link
-                      to={`/execution?symbol=${encodeURIComponent(entry.symbol)}&side=${entry.signal === 'BUY' ? 'buy' : 'sell'}`}
+                      to={`/execution?symbol=${encodeURIComponent(entry.symbol)}&side=${entry.signal === 'BUY' ? 'buy' : 'sell'}&entry=${encodeURIComponent(String(entry.entryPrice))}&stop=${encodeURIComponent(String(entry.stopLoss))}&target=${encodeURIComponent(String(entry.targetPrice))}`}
                       className="terminal-btn text-xs"
                     >
                       Plan in Execution
