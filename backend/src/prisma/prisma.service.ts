@@ -177,6 +177,25 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     );
 
     await this.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "IpoAlertStatus" (
+        "id" BIGSERIAL PRIMARY KEY,
+        "userId" BIGINT NOT NULL,
+        "ipoAlertId" VARCHAR(600) NOT NULL,
+        "appliedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT "IpoAlertStatus_userId_fkey"
+          FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE
+      );
+    `);
+    await this.$executeRawUnsafe(
+      'CREATE UNIQUE INDEX IF NOT EXISTS "IpoAlertStatus_userId_ipoAlertId_key" ON "IpoAlertStatus" ("userId", "ipoAlertId");',
+    );
+    await this.$executeRawUnsafe(
+      'CREATE INDEX IF NOT EXISTS "IpoAlertStatus_userId_appliedAt_idx" ON "IpoAlertStatus" ("userId", "appliedAt");',
+    );
+
+    await this.$executeRawUnsafe(`
       CREATE TABLE IF NOT EXISTS "Holding" (
         "id" BIGSERIAL PRIMARY KEY,
         "userId" BIGINT NOT NULL,
@@ -258,6 +277,15 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         ) THEN
           CREATE TRIGGER set_execution_decision_updated_at
           BEFORE UPDATE ON "ExecutionDecision"
+          FOR EACH ROW
+          EXECUTE FUNCTION set_updated_at_timestamp();
+        END IF;
+
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_trigger WHERE tgname = 'set_ipo_alert_status_updated_at'
+        ) THEN
+          CREATE TRIGGER set_ipo_alert_status_updated_at
+          BEFORE UPDATE ON "IpoAlertStatus"
           FOR EACH ROW
           EXECUTE FUNCTION set_updated_at_timestamp();
         END IF;

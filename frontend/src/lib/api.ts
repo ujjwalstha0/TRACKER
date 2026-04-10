@@ -1,4 +1,5 @@
 import {
+  AppliedIpoAlertsResponse,
   AuthResponse,
   AuthUser,
   ChangePasswordPayload,
@@ -12,7 +13,9 @@ import {
   FeeCalculationResult,
   IndexApiRow,
   IndicatorsResponse,
+  IpoAlertStatusResponse,
   MarketStatusResponse,
+  NepalLivePricesResponse,
   NepseCostRequest,
   NepseCostResponse,
   OtpDispatchResponse,
@@ -380,6 +383,66 @@ export async function fetchEconomicNews(limit = 30): Promise<EconomicNewsRespons
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { message?: string | string[] };
     throw new Error(parseErrorMessage(body, 'Failed to load economy-market news'));
+  }
+
+  return res.json();
+}
+
+export async function fetchNepalLivePrices(): Promise<NepalLivePricesResponse> {
+  const res = await fetch(`${API_BASE}/news/live-prices`, { cache: 'no-store' });
+
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string | string[] };
+    throw new Error(parseErrorMessage(body, 'Failed to load Nepal live prices'));
+  }
+
+  return res.json();
+}
+
+export async function fetchAppliedIpoAlerts(): Promise<AppliedIpoAlertsResponse> {
+  const res = await fetch(`${API_BASE}/news/ipo-alerts/applied`, {
+    headers: {
+      ...authHeaderOrThrow(),
+    },
+    cache: 'no-store',
+  });
+
+  if (!res.ok) {
+    return handleProtectedFailure(res);
+  }
+
+  return res.json();
+}
+
+export async function markIpoAlertApplied(ipoAlertId: string): Promise<IpoAlertStatusResponse> {
+  const res = await fetch(`${API_BASE}/news/ipo-alerts/apply`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaderOrThrow(),
+    },
+    body: JSON.stringify({ ipoAlertId }),
+  });
+
+  if (!res.ok) {
+    return handleProtectedFailure(res);
+  }
+
+  return res.json();
+}
+
+export async function markIpoAlertPending(ipoAlertId: string): Promise<IpoAlertStatusResponse> {
+  const res = await fetch(`${API_BASE}/news/ipo-alerts/pending`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaderOrThrow(),
+    },
+    body: JSON.stringify({ ipoAlertId }),
+  });
+
+  if (!res.ok) {
+    return handleProtectedFailure(res);
   }
 
   return res.json();

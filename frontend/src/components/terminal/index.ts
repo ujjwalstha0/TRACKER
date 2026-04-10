@@ -1,0 +1,1 @@
+export { MarketNewsTerminalPage } from './MarketNewsTerminalPage';

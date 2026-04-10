@@ -66,6 +66,10 @@ function formatRelativeAge(iso: string | null): string {
   return `${diffHours}h ago`;
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
 export function FloorsheetTerminalPage() {
   const [desk, setDesk] = useState<FloorsheetDeskResponse | null>(null);
   const [detail, setDetail] = useState<FloorsheetSymbolResponse | null>(null);
@@ -155,6 +159,38 @@ export function FloorsheetTerminalPage() {
   }, [desk?.symbols, detail?.insight, selectedSymbol]);
 
   const mustWatchAlerts = useMemo(() => (desk?.alerts ?? []).slice(0, 6), [desk?.alerts]);
+  const isInitialDeskLoading = loadingDesk && !desk;
+  const isInitialDetailLoading = loadingDetail && !detail && !!selectedSymbol;
+
+  const flowSignal = useMemo(() => {
+    if (!selectedInsight) {
+      return {
+        confidence: 0,
+        concentrationRisk: 0,
+        confidenceLabel: 'NO SIGNAL',
+        riskLabel: 'UNKNOWN',
+      };
+    }
+
+    const transfer = selectedInsight.pressure.transferScore;
+    const dominance = selectedInsight.pressure.dominancePct;
+    const concentration = selectedInsight.pressure.concentrationPct;
+
+    const confidence = clamp(transfer * 1.15 + dominance * 0.35 - concentration * 0.22, 0, 100);
+    const concentrationRisk = clamp(concentration, 0, 100);
+
+    const confidenceLabel =
+      confidence >= 70 ? 'HIGH CONVICTION' : confidence >= 45 ? 'MODERATE CONVICTION' : 'LOW CONVICTION';
+    const riskLabel =
+      concentrationRisk >= 72 ? 'ELEVATED RISK' : concentrationRisk >= 48 ? 'WATCH RISK' : 'CONTROLLED';
+
+    return {
+      confidence,
+      concentrationRisk,
+      confidenceLabel,
+      riskLabel,
+    };
+  }, [selectedInsight]);
 
   const entry = selectedInsight?.weightedAvgRate ?? 0;
   const suggestedSide = selectedInsight?.pressure.label === 'DISTRIBUTION' ? 'sell' : 'buy';
@@ -174,6 +210,43 @@ export function FloorsheetTerminalPage() {
       entry.toFixed(2),
     )}&stop=${encodeURIComponent(stop.toFixed(2))}&target=${encodeURIComponent(target.toFixed(2))}`;
   }, [entry, selectedSymbol, stop, suggestedSide, target]);
+
+  if (isInitialDeskLoading) {
+    return (
+      <section className="space-y-5">
+        <header className="space-y-1">
+          <p className="text-xs uppercase tracking-[0.22em] text-cyan-300/80">Trading Microstructure</p>
+          <h1 className="text-2xl font-semibold text-white sm:text-3xl">NEPSE Floorsheet Lab</h1>
+          <p className="text-sm text-zinc-400">Loading broker flow workspace...</p>
+        </header>
+
+        <section className="terminal-card p-4 sm:p-5">
+          <div className="grid gap-3 md:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <div key={`floorsheet-skeleton-stat-${index}`} className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+                <div className="skeleton-block h-3 w-24" />
+                <div className="skeleton-block mt-3 h-7 w-20" />
+              </div>
+            ))}
+          </div>
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+              <div className="skeleton-block h-3 w-36" />
+              <div className="skeleton-block mt-3 h-3 w-full" />
+              <div className="skeleton-block mt-2 h-3 w-10/12" />
+              <div className="skeleton-block mt-2 h-3 w-8/12" />
+            </div>
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+              <div className="skeleton-block h-3 w-32" />
+              <div className="skeleton-block mt-3 h-3 w-full" />
+              <div className="skeleton-block mt-2 h-3 w-9/12" />
+              <div className="skeleton-block mt-2 h-3 w-7/12" />
+            </div>
+          </div>
+        </section>
+      </section>
+    );
+  }
 
   return (
     <section className="space-y-5">
@@ -227,6 +300,20 @@ export function FloorsheetTerminalPage() {
                 <p className="mt-2 text-sm font-semibold text-zinc-100">
                   {selectedInsight ? selectedInsight.pressure.label.replace('_', ' ') : 'NO SIGNAL'}
                 </p>
+              </article>
+
+              <article className="rounded-xl border border-zinc-700/80 bg-zinc-950/70 p-3 sm:col-span-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs uppercase tracking-wide text-zinc-500">Flow Confidence</p>
+                  <span className="font-mono text-xs text-zinc-300">{flowSignal.confidence.toFixed(1)}%</span>
+                </div>
+                <div className="mt-2 h-2 overflow-hidden rounded-full bg-zinc-800">
+                  <div
+                    className="h-full rounded-full bg-[linear-gradient(90deg,rgba(34,197,94,0.9),rgba(34,211,238,0.9))]"
+                    style={{ width: `${flowSignal.confidence}%` }}
+                  />
+                </div>
+                <p className="mt-2 text-xs text-zinc-400">{flowSignal.confidenceLabel}</p>
               </article>
             </div>
           </div>
@@ -331,7 +418,15 @@ export function FloorsheetTerminalPage() {
           </header>
 
           <div className="mt-4 space-y-2">
-            {mustWatchAlerts.length ? (
+            {isInitialDetailLoading ? (
+              Array.from({ length: 4 }).map((_, index) => (
+                <div key={`alert-skeleton-${index}`} className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+                  <div className="skeleton-block h-3 w-28" />
+                  <div className="skeleton-block mt-2 h-3 w-full" />
+                  <div className="skeleton-block mt-2 h-3 w-11/12" />
+                </div>
+              ))
+            ) : mustWatchAlerts.length ? (
               mustWatchAlerts.map((alert, index) => (
                 <div key={`${alert.title}-${index}`} className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
                   <div className="flex flex-wrap items-center gap-2">
@@ -345,7 +440,10 @@ export function FloorsheetTerminalPage() {
                 </div>
               ))
             ) : (
-              <p className="text-sm text-zinc-500">No major alert triggered in current scan.</p>
+              <div className="empty-state">
+                <p className="empty-state-title">No major alert triggered right now.</p>
+                <p className="empty-state-hint">Refresh after new prints arrive or change symbol filters for deeper inspection.</p>
+              </div>
             )}
           </div>
         </article>
@@ -372,6 +470,20 @@ export function FloorsheetTerminalPage() {
             <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3 text-xs text-zinc-400">
               Entry {entry > 0 ? formatNumber(entry) : '--'} | Stop {stop > 0 ? formatNumber(stop) : '--'} | Target{' '}
               {target > 0 ? formatNumber(target) : '--'}
+            </div>
+
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+              <div className="flex items-center justify-between text-xs">
+                <span className="uppercase tracking-wide text-zinc-500">Concentration Risk</span>
+                <span className="font-mono text-zinc-300">{flowSignal.concentrationRisk.toFixed(1)}%</span>
+              </div>
+              <div className="mt-2 h-2 overflow-hidden rounded-full bg-zinc-800">
+                <div
+                  className="h-full rounded-full bg-[linear-gradient(90deg,rgba(245,158,11,0.85),rgba(239,68,68,0.9))]"
+                  style={{ width: `${flowSignal.concentrationRisk}%` }}
+                />
+              </div>
+              <p className="mt-2 text-xs text-zinc-400">{flowSignal.riskLabel}</p>
             </div>
 
             <div className="grid gap-2 sm:grid-cols-2">
@@ -421,7 +533,13 @@ export function FloorsheetTerminalPage() {
               );
             })
           ) : (
-            <p className="text-sm text-zinc-500">Symbol scan is not available right now.</p>
+            <div className="empty-state md:col-span-2 xl:col-span-4">
+              <p className="empty-state-title">Symbol scan is not available.</p>
+              <p className="empty-state-hint">Try refreshing desk data to rebuild active symbol flow ranking.</p>
+              <button type="button" className="terminal-btn mt-3 text-xs" onClick={() => void loadDesk()}>
+                Refresh Desk
+              </button>
+            </div>
           )}
         </div>
       </section>
@@ -472,7 +590,14 @@ export function FloorsheetTerminalPage() {
           </header>
 
           <div className="mt-4 space-y-2">
-            {detail?.topPrints.length ? (
+            {isInitialDetailLoading ? (
+              Array.from({ length: 5 }).map((_, index) => (
+                <div key={`print-skeleton-${index}`} className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+                  <div className="skeleton-block h-3 w-20" />
+                  <div className="skeleton-block mt-2 h-3 w-11/12" />
+                </div>
+              ))
+            ) : detail?.topPrints.length ? (
               detail.topPrints.slice(0, 8).map((print, index) => (
                 <div key={`${print.contractNo ?? index}-${print.amount}-${index}`} className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -485,7 +610,10 @@ export function FloorsheetTerminalPage() {
                 </div>
               ))
             ) : (
-              <p className="text-sm text-zinc-500">No block prints detected for current selection.</p>
+              <div className="empty-state">
+                <p className="empty-state-title">No block prints detected.</p>
+                <p className="empty-state-hint">This symbol currently shows smaller tape prints or limited flow concentration.</p>
+              </div>
             )}
           </div>
         </article>
@@ -499,7 +627,7 @@ export function FloorsheetTerminalPage() {
 
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-zinc-800 text-sm">
-              <thead className="bg-black/40 text-xs uppercase tracking-wide text-zinc-500">
+              <thead className="sticky top-0 z-10 bg-black/80 text-xs uppercase tracking-wide text-zinc-500 backdrop-blur">
                 <tr>
                   <th className="px-4 py-3 text-left">Broker</th>
                   <th className="px-4 py-3 text-right">Net Amount</th>
@@ -534,7 +662,7 @@ export function FloorsheetTerminalPage() {
 
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-zinc-800 text-sm">
-              <thead className="bg-black/40 text-xs uppercase tracking-wide text-zinc-500">
+              <thead className="sticky top-0 z-10 bg-black/80 text-xs uppercase tracking-wide text-zinc-500 backdrop-blur">
                 <tr>
                   <th className="px-4 py-3 text-left">Broker</th>
                   <th className="px-4 py-3 text-right">Net Amount</th>
@@ -573,7 +701,7 @@ export function FloorsheetTerminalPage() {
 
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-zinc-800 text-sm">
-            <thead className="bg-black/40 text-xs uppercase tracking-wide text-zinc-500">
+            <thead className="sticky top-0 z-10 bg-black/80 text-xs uppercase tracking-wide text-zinc-500 backdrop-blur">
               <tr>
                 <th className="px-4 py-3 text-left">Contract</th>
                 <th className="px-4 py-3 text-left">Buyer</th>

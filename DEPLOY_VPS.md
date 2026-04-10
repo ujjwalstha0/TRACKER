@@ -23,6 +23,26 @@ This stack is isolated from your old project using different container names, in
 - Open https://sachetana.online
 - API is proxied at https://sachetana.online/api
 
+## 5.1) OHLC auto-update (daily incremental)
+- This stack now auto-runs incremental OHLC backfill daily in backend.
+- Default behavior:
+  - enabled: true
+  - run once after startup (after 90s)
+  - repeat every 24 hours
+  - incremental window: last 1 day
+- Configure in `.env` if needed:
+  - `OHLC_AUTO_BACKFILL_ENABLED=true`
+  - `OHLC_AUTO_BACKFILL_RUN_ON_STARTUP=true`
+  - `OHLC_AUTO_BACKFILL_STARTUP_DELAY_MS=90000`
+  - `OHLC_AUTO_BACKFILL_INTERVAL_HOURS=24`
+  - `OHLC_AUTO_BACKFILL_SINCE_DAYS=1`
+  - `OHLC_AUTO_BACKFILL_SYMBOLS_LIMIT=220`
+  - `OHLC_AUTO_BACKFILL_THROTTLE_MS=45`
+
+## 5.2) Check auto backfill status
+- `curl -fsS http://127.0.0.1:8087/api/ohlc/backfill/status`
+- `docker compose --project-name nepse_tracker --env-file .env -f docker-compose.prod.yml logs --tail=200 tracker-backend | grep -i "automatic OHLC backfill\|Started automatic OHLC backfill"`
+
 ## 6) Logs
 - docker compose --project-name nepse_tracker logs -f tracker-frontend
 - docker compose --project-name nepse_tracker logs -f tracker-backend

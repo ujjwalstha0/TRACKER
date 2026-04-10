@@ -132,3 +132,20 @@ CREATE INDEX IF NOT EXISTS "ExecutionDecision_tradeDate_idx"
 
 CREATE INDEX IF NOT EXISTS "ExecutionDecision_createdAt_idx"
   ON "ExecutionDecision" ("createdAt");
+
+CREATE TABLE IF NOT EXISTS "IpoAlertStatus" (
+  "id" BIGSERIAL PRIMARY KEY,
+  "userId" BIGINT NOT NULL,
+  "ipoAlertId" VARCHAR(600) NOT NULL,
+  "appliedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "IpoAlertStatus_userId_fkey"
+    FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS "IpoAlertStatus_userId_ipoAlertId_key"
+  ON "IpoAlertStatus" ("userId", "ipoAlertId");
+
+CREATE INDEX IF NOT EXISTS "IpoAlertStatus_userId_appliedAt_idx"
+  ON "IpoAlertStatus" ("userId", "appliedAt");

@@ -1,23 +1,31 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
+  fetchAppliedIpoAlerts,
   fetchEconomicNews,
   fetchFloorsheetDesk,
   fetchIndices,
   fetchMarketStatus,
+  markIpoAlertApplied,
+  markIpoAlertPending,
+  fetchNepalLivePrices,
   fetchSignalNotebookToday,
   fetchWatchlist,
 } from '../../lib/api';
+import { getAuthToken } from '../../lib/auth';
 import {
   EconomicNewsResponse,
   FloorsheetDeskResponse,
   IndexApiRow,
   MarketStatusResponse,
+  NepalLivePriceItem,
+  NepalLivePricesResponse,
   SignalNotebookResponse,
   WatchlistApiRow,
 } from '../../types';
 
 const PRO_DESK_REFRESH_MS = 60_000;
+const IPO_APPLIED_STORAGE_KEY = 'infoshare.ipo-applied.v1';
 
 const DEFAULT_MARKET_STATUS: MarketStatusResponse = {
   isOpen: false,
@@ -35,6 +43,63 @@ interface RegimeSnapshot {
   gainers: number;
   losers: number;
   nepseChangePct: number;
+}
+
+interface IpoAlertItem {
+  id: string;
+  headline: string;
+  summary: string;
+  source: string;
+  url: string;
+  publishedDate: string | null;
+}
+
+function readAppliedIpoMap(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(IPO_APPLIED_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {};
+    }
+
+    return Object.entries(parsed).reduce<Record<string, string>>((acc, [key, value]) => {
+      if (typeof value === 'string' && value.trim()) {
+        acc[key] = value;
+      }
+      return acc;
+    }, {});
+  } catch {
+    return {};
+  }
+}
+
+function isActionableIpoHeadline(headline: string): boolean {
+  const lower = headline.toLowerCase();
+
+  const hasIpoSignal =
+    /\bipo\b/.test(lower) ||
+    /initial public offering/.test(lower) ||
+    /public issue/.test(lower);
+
+  if (!hasIpoSignal) {
+    return false;
+  }
+
+  if (/(listed|listing|allotment|allotted|closed|closing|bonus|right share|fpo)/.test(lower)) {
+    return false;
+  }
+
+  return /(open|opening|issue|issuing|approved|approval|book building|subscription|apply|general public)/.test(
+    lower,
+  );
+}
+
+function toIpoAlertId(source: string, url: string): string {
+  return `${source}::${url}`;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -60,6 +125,17 @@ function formatSignedPercent(value: number): string {
   return `${sign}${value.toFixed(2)}%`;
 }
 
+function formatNprValue(value: number | null, fractionDigits = 2): string {
+  if (value === null) {
+    return '-';
+  }
+
+  return new Intl.NumberFormat('en-IN', {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  }).format(value);
+}
+
 function formatRelativeAge(iso: string | null): string {
   if (!iso) return 'awaiting feed timestamp';
 
@@ -72,6 +148,15 @@ function formatRelativeAge(iso: string | null): string {
 
   const diffHours = Math.floor(diffMins / 60);
   return `${diffHours}h ago`;
+}
+
+function compactSummary(summary: string, headline: string): string {
+  const normalized = (summary || headline).replace(/\s+/g, ' ').trim();
+  if (normalized.length <= 190) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, 190).trimEnd()}...`;
 }
 
 function getAgeMinutes(iso: string | null): number | null {
@@ -98,6 +183,16 @@ function impactClass(impact: 'HIGH' | 'MEDIUM' | 'LOW'): string {
   if (impact === 'HIGH') return 'border-terminal-red/70 bg-terminal-red/20 text-terminal-red';
   if (impact === 'MEDIUM') return 'border-terminal-amber/70 bg-terminal-amber/20 text-terminal-amber';
   return 'border-cyan-400/70 bg-cyan-500/15 text-cyan-200';
+}
+
+function sentimentClass(sentiment: 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL'): string {
+  if (sentiment === 'POSITIVE') return 'border-terminal-green/70 bg-terminal-green/15 text-terminal-green';
+  if (sentiment === 'NEGATIVE') return 'border-terminal-red/70 bg-terminal-red/20 text-terminal-red';
+  return 'border-zinc-600/80 bg-zinc-900/70 text-zinc-200';
+}
+
+function scopeLabel(scope: 'COMPANY' | 'SECTOR' | 'MARKET' | 'MACRO'): string {
+  return scope === 'MARKET' ? 'MARKET WIDE' : scope;
 }
 
 function signalClass(signal: 'BUY' | 'SELL'): string {
@@ -190,22 +285,38 @@ export function ProDeskTerminalPage() {
   const [watchlist, setWatchlist] = useState<WatchlistApiRow[]>([]);
   const [notebook, setNotebook] = useState<SignalNotebookResponse | null>(null);
   const [news, setNews] = useState<EconomicNewsResponse | null>(null);
+  const [livePrices, setLivePrices] = useState<NepalLivePricesResponse | null>(null);
   const [floorsheetDesk, setFloorsheetDesk] = useState<FloorsheetDeskResponse | null>(null);
   const [marketStatus, setMarketStatus] = useState<MarketStatusResponse>(DEFAULT_MARKET_STATUS);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [lastLoadedAt, setLastLoadedAt] = useState<string | null>(null);
+  const [appliedIpoMap, setAppliedIpoMap] = useState<Record<string, string>>(() => readAppliedIpoMap());
+  const [ipoSyncMode, setIpoSyncMode] = useState<'LOCAL' | 'SERVER'>('LOCAL');
+  const [ipoSyncNotice, setIpoSyncNotice] = useState('');
 
   const loadDesk = useCallback(async () => {
     setLoading(true);
+    const canSyncIpo = Boolean(getAuthToken());
 
-    const [indicesRes, watchlistRes, notebookRes, newsRes, marketStatusRes, floorsheetRes] = await Promise.allSettled([
+    const [
+      indicesRes,
+      watchlistRes,
+      notebookRes,
+      newsRes,
+      marketStatusRes,
+      floorsheetRes,
+      livePricesRes,
+      ipoAppliedRes,
+    ] = await Promise.allSettled([
       fetchIndices(),
       fetchWatchlist(),
       fetchSignalNotebookToday(),
       fetchEconomicNews(20),
       fetchMarketStatus(),
       fetchFloorsheetDesk({ symbols: 5, rows: 90 }),
+      fetchNepalLivePrices(),
+      canSyncIpo ? fetchAppliedIpoAlerts() : Promise.resolve(null),
     ]);
 
     let successfulCalls = 0;
@@ -240,6 +351,30 @@ export function ProDeskTerminalPage() {
       successfulCalls += 1;
     }
 
+    if (livePricesRes.status === 'fulfilled') {
+      setLivePrices(livePricesRes.value);
+      successfulCalls += 1;
+    }
+
+    if (canSyncIpo) {
+      if (ipoAppliedRes.status === 'fulfilled' && ipoAppliedRes.value) {
+        const serverAppliedMap = ipoAppliedRes.value.items.reduce<Record<string, string>>((acc, item) => {
+          acc[item.ipoAlertId] = item.appliedAt;
+          return acc;
+        }, {});
+
+        setAppliedIpoMap(serverAppliedMap);
+        setIpoSyncMode('SERVER');
+        setIpoSyncNotice('');
+      } else if (ipoAppliedRes.status === 'rejected') {
+        setIpoSyncMode('LOCAL');
+        setIpoSyncNotice('Account IPO sync is unavailable. Using this browser history for now.');
+      }
+    } else {
+      setIpoSyncMode('LOCAL');
+      setIpoSyncNotice('');
+    }
+
     if (successfulCalls === 0) {
       setError('Unable to load NEPSE desk data right now. Please refresh in a moment.');
     } else {
@@ -259,6 +394,14 @@ export function ProDeskTerminalPage() {
 
     return () => clearInterval(timer);
   }, [loadDesk]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(IPO_APPLIED_STORAGE_KEY, JSON.stringify(appliedIpoMap));
+    } catch {
+      // Ignore storage failures; state still works in current session.
+    }
+  }, [appliedIpoMap]);
 
   const regime = useMemo(() => computeRegime(indices, watchlist), [indices, watchlist]);
 
@@ -291,6 +434,142 @@ export function ProDeskTerminalPage() {
       .sort((a, b) => b.relevanceScore - a.relevanceScore)
       .slice(0, 8);
   }, [news?.items]);
+
+  const ipoAlerts = useMemo<IpoAlertItem[]>(() => {
+    return [...(news?.items ?? [])]
+      .filter((item) => isActionableIpoHeadline(item.headline))
+      .sort((a, b) => {
+        const dateA = Date.parse(a.publishedDate ?? '');
+        const dateB = Date.parse(b.publishedDate ?? '');
+        const normalizedA = Number.isFinite(dateA) ? dateA : 0;
+        const normalizedB = Number.isFinite(dateB) ? dateB : 0;
+
+        return normalizedB - normalizedA || b.relevanceScore - a.relevanceScore;
+      })
+      .slice(0, 6)
+      .map((item) => ({
+        id: toIpoAlertId(item.source, item.url),
+        headline: item.headline,
+        summary: compactSummary(item.summary, item.headline),
+        source: item.source,
+        url: item.url,
+        publishedDate: item.publishedDate,
+      }));
+  }, [news?.items]);
+
+  const pendingIpoCount = useMemo(() => {
+    return ipoAlerts.filter((item) => !appliedIpoMap[item.id]).length;
+  }, [appliedIpoMap, ipoAlerts]);
+
+  const markIpoApplied = useCallback(async (id: string) => {
+    const optimisticAppliedAt = new Date().toISOString();
+
+    setAppliedIpoMap((prev) => ({
+      ...prev,
+      [id]: optimisticAppliedAt,
+    }));
+
+    if (!getAuthToken()) {
+      setIpoSyncMode('LOCAL');
+      setIpoSyncNotice('');
+      return;
+    }
+
+    try {
+      const response = await markIpoAlertApplied(id);
+      setAppliedIpoMap((prev) => ({
+        ...prev,
+        [id]: response.appliedAt ?? optimisticAppliedAt,
+      }));
+      setIpoSyncMode('SERVER');
+      setIpoSyncNotice('');
+    } catch {
+      setAppliedIpoMap((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      setIpoSyncMode('LOCAL');
+      setIpoSyncNotice('Could not sync IPO applied status to your account. Kept pending.');
+    }
+  }, []);
+
+  const markIpoPending = useCallback(async (id: string) => {
+    const previousAppliedAt = appliedIpoMap[id] ?? null;
+
+    setAppliedIpoMap((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+
+    if (!getAuthToken()) {
+      setIpoSyncMode('LOCAL');
+      setIpoSyncNotice('');
+      return;
+    }
+
+    try {
+      await markIpoAlertPending(id);
+      setIpoSyncMode('SERVER');
+      setIpoSyncNotice('');
+    } catch {
+      if (previousAppliedAt) {
+        setAppliedIpoMap((prev) => ({
+          ...prev,
+          [id]: previousAppliedAt,
+        }));
+      }
+
+      setIpoSyncMode('LOCAL');
+      setIpoSyncNotice('Could not sync pending status to your account. Previous state restored.');
+    }
+  }, [appliedIpoMap]);
+
+  const livePriceMap = useMemo(() => {
+    const map = new Map<NepalLivePriceItem['key'], NepalLivePriceItem>();
+    for (const row of livePrices?.items ?? []) {
+      map.set(row.key, row);
+    }
+    return map;
+  }, [livePrices?.items]);
+
+  const livePriceCards = useMemo(
+    () => [
+      {
+        key: 'GOLD' as const,
+        title: 'Gold',
+        price: livePriceMap.get('GOLD')?.value ?? null,
+        unit: 'per tola',
+        accent: 'text-amber-200',
+      },
+      {
+        key: 'SILVER' as const,
+        title: 'Silver',
+        price: livePriceMap.get('SILVER')?.value ?? null,
+        unit: 'per tola',
+        accent: 'text-zinc-200',
+      },
+      {
+        key: 'PETROL' as const,
+        title: 'Petrol',
+        price: livePriceMap.get('PETROL')?.value ?? null,
+        unit: 'per litre',
+        accent: 'text-terminal-red',
+      },
+      {
+        key: 'DIESEL' as const,
+        title: 'Diesel',
+        price: livePriceMap.get('DIESEL')?.value ?? null,
+        unit: 'per litre',
+        accent: 'text-cyan-200',
+      },
+    ],
+    [livePriceMap],
+  );
+
+  const livePriceNote =
+    livePriceMap.get('PETROL')?.note ?? livePriceMap.get('DIESEL')?.note ?? livePriceMap.get('GOLD')?.note ?? null;
 
   const highImpactCount = useMemo(
     () => (news?.items ?? []).filter((item) => item.impact === 'HIGH').length,
@@ -462,6 +741,123 @@ export function ProDeskTerminalPage() {
           <p className="mt-2 text-sm text-zinc-200">Source: {marketStatus.source}</p>
           <p className="mt-1 text-xs text-zinc-500">{formatAsOf(marketStatus.asOf)}</p>
         </article>
+      </section>
+
+      {ipoAlerts.length ? (
+        <section className="terminal-card p-4 sm:p-5">
+          <header className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">IPO Auto Alerts</p>
+              <h2 className="mt-1 text-lg font-semibold text-white">New IPO Opportunities</h2>
+              <p className="mt-1 text-[11px] text-zinc-500">
+                Sync: {ipoSyncMode === 'SERVER' ? 'Account linked (all devices)' : 'This browser only'}
+              </p>
+            </div>
+
+            {pendingIpoCount > 0 ? (
+              <span className="animate-pulse rounded-md border border-terminal-red/70 bg-terminal-red/20 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-terminal-red">
+                {pendingIpoCount} Unapplied IPO
+              </span>
+            ) : (
+              <span className="rounded-md border border-terminal-green/70 bg-terminal-green/15 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-terminal-green">
+                All IPO Alerts Applied
+              </span>
+            )}
+          </header>
+
+          {ipoSyncNotice ? <p className="mt-3 text-xs text-terminal-amber">{ipoSyncNotice}</p> : null}
+
+          <div className="mt-4 space-y-2">
+            {ipoAlerts.map((item) => {
+              const isApplied = !!appliedIpoMap[item.id];
+
+              return (
+                <article
+                  key={item.id}
+                  className={`rounded-lg border p-3 ${
+                    isApplied
+                      ? 'border-zinc-800 bg-zinc-950/70'
+                      : 'border-terminal-red/70 bg-terminal-red/10'
+                  }`}
+                >
+                  <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                    <span className="uppercase tracking-wide text-zinc-500">{item.source}</span>
+                    <span className="text-zinc-600">{formatRelativeAge(item.publishedDate)}</span>
+                    {isApplied ? (
+                      <span className="rounded-md border border-terminal-green/70 bg-terminal-green/15 px-2 py-1 font-semibold uppercase tracking-wide text-terminal-green">
+                        Applied
+                      </span>
+                    ) : (
+                      <span className="animate-pulse rounded-md border border-terminal-red/70 bg-terminal-red/20 px-2 py-1 font-semibold uppercase tracking-wide text-terminal-red">
+                        Blink: Apply Pending
+                      </span>
+                    )}
+                  </div>
+
+                  <p className="mt-2 text-sm font-semibold text-zinc-100">{item.headline}</p>
+                  <p className="mt-1 text-xs leading-relaxed text-zinc-400">{item.summary}</p>
+
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <a href={item.url} target="_blank" rel="noreferrer" className="terminal-btn text-xs">
+                      Open Source
+                    </a>
+
+                    {isApplied ? (
+                      <button
+                        type="button"
+                        onClick={() => void markIpoPending(item.id)}
+                        className="terminal-btn text-xs"
+                      >
+                        Mark Pending
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void markIpoApplied(item.id)}
+                        className="terminal-btn text-xs"
+                      >
+                        I Applied IPO
+                      </button>
+                    )}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
+
+      <section className="terminal-card p-4 sm:p-5">
+        <header className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Nepal Live Rates</p>
+            <h2 className="mt-1 text-lg font-semibold text-white">Gold, Silver, Petrol, Diesel</h2>
+          </div>
+          <span className="rounded-md border border-zinc-700/80 bg-zinc-900/70 px-2 py-1 text-[11px] text-zinc-400">
+            Updated {formatRelativeAge(livePrices?.asOf ?? null)}
+          </span>
+        </header>
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {livePriceCards.map((card) => {
+            const source = livePriceMap.get(card.key)?.source ?? '--';
+            const asOf = livePriceMap.get(card.key)?.asOf ?? null;
+            const hasDecimals = card.key === 'SILVER' || card.key === 'PETROL' || card.key === 'DIESEL';
+
+            return (
+              <article key={card.key} className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+                <p className="text-xs uppercase tracking-wide text-zinc-500">{card.title}</p>
+                <p className={`mt-2 font-mono text-2xl font-bold ${card.accent}`}>
+                  NPR {formatNprValue(card.price, hasDecimals ? 2 : 0)}
+                </p>
+                <p className="mt-1 text-[11px] text-zinc-500">{card.unit}</p>
+                <p className="mt-1 text-[11px] text-zinc-600">{source} • {formatRelativeAge(asOf)}</p>
+              </article>
+            );
+          })}
+        </div>
+
+        {livePriceNote ? <p className="mt-3 text-xs text-zinc-500">{livePriceNote}</p> : null}
       </section>
 
       <section className="terminal-card p-4 sm:p-5">
@@ -707,31 +1103,50 @@ export function ProDeskTerminalPage() {
           <header className="flex items-center justify-between gap-2">
             <div>
               <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Macro Radar</p>
-              <h2 className="mt-1 text-lg font-semibold text-white">Market-Moving Headlines</h2>
+              <h2 className="mt-1 text-lg font-semibold text-white">Market-Moving Headlines (Quick Briefs)</h2>
             </div>
             <Link to="/market-news" className="terminal-btn text-xs">View All News</Link>
           </header>
 
           <div className="mt-4 space-y-2">
             {topHeadlines.length ? (
-              topHeadlines.map((item, index) => (
-                <a
-                  key={`${item.source}-${index}-${item.url}`}
-                  href={item.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="block rounded-lg border border-zinc-800 bg-zinc-950/70 p-3 transition hover:border-cyan-400/70"
-                >
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className={`rounded-md border px-2 py-1 text-[10px] font-semibold tracking-wide ${impactClass(item.impact)}`}>
-                      {item.impact}
-                    </span>
-                    <span className="text-[11px] uppercase tracking-wide text-zinc-500">{item.source}</span>
-                    <span className="text-[11px] text-zinc-600">{formatRelativeAge(item.publishedDate)}</span>
-                  </div>
-                  <p className="mt-2 text-sm text-zinc-200">{item.headline}</p>
-                </a>
-              ))
+              topHeadlines.map((item, index) => {
+                const summary = compactSummary(item.summary, item.headline);
+
+                return (
+                  <article
+                    key={`${item.source}-${index}-${item.url}`}
+                    className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3 transition hover:border-cyan-400/70"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`rounded-md border px-2 py-1 text-[10px] font-semibold tracking-wide ${impactClass(item.impact)}`}>
+                        {item.impact}
+                      </span>
+                      <span className={`rounded-md border px-2 py-1 text-[10px] font-semibold tracking-wide ${sentimentClass(item.sentiment)}`}>
+                        {item.sentiment}
+                      </span>
+                      <span className="rounded-md border border-zinc-700/80 bg-zinc-900/70 px-2 py-1 text-[10px] font-semibold tracking-wide text-zinc-200">
+                        {scopeLabel(item.impactScope)}
+                      </span>
+                      <span className="text-[11px] uppercase tracking-wide text-zinc-500">{item.source}</span>
+                      <span className="text-[11px] text-zinc-600">{formatRelativeAge(item.publishedDate)}</span>
+                    </div>
+                    <p className="mt-2 text-sm font-semibold text-zinc-200">{item.headline}</p>
+                    <p className="mt-1 text-xs leading-relaxed text-zinc-400">{summary}</p>
+                    <p className="mt-1 text-[11px] text-zinc-500">{item.marketEffect}</p>
+                    <div className="mt-3 flex justify-end">
+                      <a
+                        href={item.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="terminal-btn text-xs"
+                      >
+                        Open Source
+                      </a>
+                    </div>
+                  </article>
+                );
+              })
             ) : (
               <p className="text-sm text-zinc-500">No recent macro headlines available.</p>
             )}

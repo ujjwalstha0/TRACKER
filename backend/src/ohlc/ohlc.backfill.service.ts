@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import axios, { AxiosRequestConfig } from 'axios';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -18,6 +18,11 @@ const MAX_SYMBOLS_LIMIT = 450;
 const DEFAULT_THROTTLE_MS = 45;
 const MIN_THROTTLE_MS = 0;
 const MAX_THROTTLE_MS = 500;
+
+const DEFAULT_AUTO_BACKFILL_ENABLED = true;
+const DEFAULT_AUTO_BACKFILL_SINCE_DAYS = 1;
+const DEFAULT_AUTO_BACKFILL_INTERVAL_HOURS = 24;
+const DEFAULT_AUTO_BACKFILL_STARTUP_DELAY_MS = 90_000;
 
 const MAX_RECENT_REPORTS = 30;
 const HISTORY_FETCH_RETRY_COUNT = 3;
@@ -80,9 +85,22 @@ interface CandleInsertRow {
   v: bigint | null;
 }
 
+interface AutoBackfillConfig {
+  enabled: boolean;
+  symbolsLimit: number;
+  sinceDays: number;
+  throttleMs: number;
+  intervalHours: number;
+  runOnStartup: boolean;
+  startupDelayMs: number;
+}
+
 @Injectable()
-export class OhlcBackfillService {
+export class OhlcBackfillService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(OhlcBackfillService.name);
+  private readonly autoBackfill: AutoBackfillConfig;
+  private startupTimer: NodeJS.Timeout | null = null;
+  private intervalTimer: NodeJS.Timeout | null = null;
 
   private jobState: OhlcBackfillJobState = {
     jobId: null,
@@ -105,7 +123,25 @@ export class OhlcBackfillService {
     error: null,
   };
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) {
+    this.autoBackfill = this.readAutoBackfillConfig();
+  }
+
+  onModuleInit(): void {
+    this.startAutoBackfillScheduler();
+  }
+
+  onModuleDestroy(): void {
+    if (this.startupTimer) {
+      clearTimeout(this.startupTimer);
+      this.startupTimer = null;
+    }
+
+    if (this.intervalTimer) {
+      clearInterval(this.intervalTimer);
+      this.intervalTimer = null;
+    }
+  }
 
   startAllSymbolsBackfill(request?: OhlcBackfillRequest): OhlcBackfillJobState {
     if (this.jobState.status === 'RUNNING') {
@@ -138,6 +174,49 @@ export class OhlcBackfillService {
 
   getBackfillStatus(): OhlcBackfillJobState {
     return this.jobState;
+  }
+
+  private startAutoBackfillScheduler(): void {
+    if (!this.autoBackfill.enabled) {
+      this.logger.log('Automatic OHLC daily backfill is disabled (OHLC_AUTO_BACKFILL_ENABLED=false).');
+      return;
+    }
+
+    if (this.autoBackfill.runOnStartup) {
+      this.startupTimer = setTimeout(() => {
+        void this.startAutoBackfill('startup');
+      }, this.autoBackfill.startupDelayMs);
+      this.startupTimer.unref?.();
+    }
+
+    const intervalMs = this.autoBackfill.intervalHours * 60 * 60 * 1000;
+    this.intervalTimer = setInterval(() => {
+      void this.startAutoBackfill('interval');
+    }, intervalMs);
+    this.intervalTimer.unref?.();
+
+    this.logger.log(
+      `Automatic OHLC daily backfill is enabled: sinceDays=${this.autoBackfill.sinceDays}, symbolsLimit=${this.autoBackfill.symbolsLimit}, throttleMs=${this.autoBackfill.throttleMs}, intervalHours=${this.autoBackfill.intervalHours}.`,
+    );
+  }
+
+  private async startAutoBackfill(trigger: 'startup' | 'interval'): Promise<void> {
+    if (this.jobState.status === 'RUNNING') {
+      this.logger.warn(
+        `Skipping automatic OHLC backfill (${trigger}) because job ${this.jobState.jobId ?? 'unknown'} is already running.`,
+      );
+      return;
+    }
+
+    const state = this.startAllSymbolsBackfill({
+      symbolsLimit: this.autoBackfill.symbolsLimit,
+      sinceDays: this.autoBackfill.sinceDays,
+      throttleMs: this.autoBackfill.throttleMs,
+    });
+
+    this.logger.log(
+      `Started automatic OHLC backfill (${trigger}) with jobId=${state.jobId}, sinceDays=${this.autoBackfill.sinceDays}.`,
+    );
   }
 
   async backfillSingleSymbol(symbol: string, request?: OhlcBackfillRequest): Promise<OhlcBackfillSymbolReport> {
@@ -664,6 +743,77 @@ export class OhlcBackfillService {
     }
 
     return Math.max(min, Math.min(max, Math.floor(parsed)));
+  }
+
+  private toBoolean(value: string | undefined, fallback: boolean): boolean {
+    if (!value) {
+      return fallback;
+    }
+
+    const normalized = value.trim().toLowerCase();
+    if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) {
+      return true;
+    }
+
+    if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) {
+      return false;
+    }
+
+    return fallback;
+  }
+
+  private readAutoBackfillConfig(): AutoBackfillConfig {
+    const enabled = this.toBoolean(
+      process.env.OHLC_AUTO_BACKFILL_ENABLED,
+      DEFAULT_AUTO_BACKFILL_ENABLED,
+    );
+
+    const symbolsLimit = this.toBoundedInt(
+      process.env.OHLC_AUTO_BACKFILL_SYMBOLS_LIMIT,
+      DEFAULT_SYMBOLS_LIMIT,
+      MIN_SYMBOLS_LIMIT,
+      MAX_SYMBOLS_LIMIT,
+    );
+
+    const sinceDays = this.toBoundedInt(
+      process.env.OHLC_AUTO_BACKFILL_SINCE_DAYS,
+      DEFAULT_AUTO_BACKFILL_SINCE_DAYS,
+      1,
+      365,
+    );
+
+    const throttleMs = this.toBoundedInt(
+      process.env.OHLC_AUTO_BACKFILL_THROTTLE_MS,
+      DEFAULT_THROTTLE_MS,
+      MIN_THROTTLE_MS,
+      MAX_THROTTLE_MS,
+    );
+
+    const intervalHours = this.toBoundedInt(
+      process.env.OHLC_AUTO_BACKFILL_INTERVAL_HOURS,
+      DEFAULT_AUTO_BACKFILL_INTERVAL_HOURS,
+      1,
+      168,
+    );
+
+    const runOnStartup = this.toBoolean(process.env.OHLC_AUTO_BACKFILL_RUN_ON_STARTUP, true);
+
+    const startupDelayMs = this.toBoundedInt(
+      process.env.OHLC_AUTO_BACKFILL_STARTUP_DELAY_MS,
+      DEFAULT_AUTO_BACKFILL_STARTUP_DELAY_MS,
+      10_000,
+      30 * 60 * 1000,
+    );
+
+    return {
+      enabled,
+      symbolsLimit,
+      sinceDays,
+      throttleMs,
+      intervalHours,
+      runOnStartup,
+      startupDelayMs,
+    };
   }
 
   private round4(value: number): number {
