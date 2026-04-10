@@ -199,6 +199,33 @@
     @apply inline-flex items-center rounded-md border border-zinc-700 bg-zinc-900/80 px-1.5 py-0.5 font-mono text-[11px] text-zinc-200;
   }
 
+  .rate-visual-card {
+    overflow: hidden;
+  }
+
+  .rate-visual-media {
+    position: relative;
+    border-radius: 0.6rem;
+    overflow: hidden;
+    border: 1px solid rgba(82, 95, 117, 0.6);
+    box-shadow:
+      0 10px 22px rgba(0, 0, 0, 0.33),
+      inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  }
+
+  .rate-visual-image {
+    display: block;
+    width: 100%;
+    height: 82px;
+    object-fit: cover;
+    transform: scale(1.02);
+    transition: transform 0.26s ease;
+  }
+
+  .rate-visual-card:hover .rate-visual-image {
+    transform: scale(1.06);
+  }
+
   .ui-density-compact {
     font-size: 15px;
   }

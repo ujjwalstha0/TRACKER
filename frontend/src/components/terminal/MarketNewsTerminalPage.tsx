@@ -1,4 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import dieselRateVisual from '../../assets/visuals/diesel-rate.svg';
+import goldRateVisual from '../../assets/visuals/gold-rate.svg';
+import petrolRateVisual from '../../assets/visuals/petrol-rate.svg';
+import silverRateVisual from '../../assets/visuals/silver-rate.svg';
 import { fetchEconomicNews, fetchNepalLivePrices } from '../../lib/api';
 import {
   EconomicNewsItem,
@@ -73,6 +77,22 @@ function truncateSummary(value: string, expanded: boolean): string {
   }
 
   return `${normalized.slice(0, 260).trimEnd()}...`;
+}
+
+function macroVisualForItem(item: { impact: 'HIGH' | 'MEDIUM' | 'LOW'; sentiment: 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL' }): string {
+  if (item.impact === 'HIGH' || item.sentiment === 'NEGATIVE') {
+    return petrolRateVisual;
+  }
+
+  if (item.sentiment === 'POSITIVE') {
+    return goldRateVisual;
+  }
+
+  if (item.impact === 'MEDIUM') {
+    return dieselRateVisual;
+  }
+
+  return silverRateVisual;
 }
 
 export function MarketNewsTerminalPage() {
@@ -225,6 +245,8 @@ export function MarketNewsTerminalPage() {
         value: livePriceMap.get('GOLD')?.value ?? null,
         decimals: 0,
         accent: 'text-amber-200',
+        visual: goldRateVisual,
+        chip: 'Bullion',
       },
       {
         key: 'SILVER' as const,
@@ -233,6 +255,8 @@ export function MarketNewsTerminalPage() {
         value: livePriceMap.get('SILVER')?.value ?? null,
         decimals: 2,
         accent: 'text-zinc-100',
+        visual: silverRateVisual,
+        chip: 'Bullion',
       },
       {
         key: 'PETROL' as const,
@@ -241,6 +265,8 @@ export function MarketNewsTerminalPage() {
         value: livePriceMap.get('PETROL')?.value ?? null,
         decimals: 2,
         accent: 'text-terminal-red',
+        visual: petrolRateVisual,
+        chip: 'Fuel',
       },
       {
         key: 'DIESEL' as const,
@@ -249,6 +275,8 @@ export function MarketNewsTerminalPage() {
         value: livePriceMap.get('DIESEL')?.value ?? null,
         decimals: 2,
         accent: 'text-cyan-200',
+        visual: dieselRateVisual,
+        chip: 'Fuel',
       },
     ],
     [livePriceMap],
@@ -286,9 +314,17 @@ export function MarketNewsTerminalPage() {
           const asOf = livePriceMap.get(card.key)?.asOf ?? livePrices?.asOf ?? null;
 
           return (
-            <article key={card.key} className="terminal-card p-4">
-              <p className="text-xs uppercase tracking-wide text-zinc-500">{card.title}</p>
-              <p className={`mt-2 font-mono text-2xl font-bold ${card.accent}`}>
+            <article key={card.key} className="rate-visual-card terminal-card p-4">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs uppercase tracking-wide text-zinc-500">{card.title}</p>
+                <span className="rounded-md border border-zinc-700/80 bg-zinc-900/80 px-2 py-0.5 text-[10px] uppercase tracking-wide text-zinc-300">
+                  {card.chip}
+                </span>
+              </div>
+              <div className="rate-visual-media mt-2">
+                <img src={card.visual} alt={`${card.title} visual`} className="rate-visual-image" loading="lazy" />
+              </div>
+              <p className={`mt-3 font-mono text-2xl font-bold ${card.accent}`}>
                 NPR {formatNprValue(card.value, card.decimals)}
               </p>
               <p className="mt-1 text-xs text-zinc-500">{card.unit}</p>
@@ -523,10 +559,18 @@ export function MarketNewsTerminalPage() {
                   </div>
 
                   <p className="mt-2 text-sm font-semibold text-zinc-100">{item.headline}</p>
-
-                  <p className="mt-2 text-sm leading-relaxed text-zinc-300">{truncateSummary(summary, expanded)}</p>
-
-                  <p className="mt-2 text-xs text-zinc-400">Market effect: {item.marketEffect}</p>
+                  <div className="mt-2 flex gap-3">
+                    <img
+                      src={macroVisualForItem(item)}
+                      alt="News visual"
+                      className="h-16 w-24 rounded-md border border-zinc-700/70 object-cover"
+                      loading="lazy"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm leading-relaxed text-zinc-300">{truncateSummary(summary, expanded)}</p>
+                      <p className="mt-2 text-xs text-zinc-400">Market effect: {item.marketEffect}</p>
+                    </div>
+                  </div>
 
                   {item.affectedSymbols.length || item.affectedSectors.length ? (
                     <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-zinc-500">

@@ -1,0 +1,20 @@
+<svg width="320" height="200" viewBox="0 0 320 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="320" y2="200" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4C5969"/>
+      <stop offset="1" stop-color="#0D1218"/>
+    </linearGradient>
+    <linearGradient id="coin" x1="110" y1="42" x2="242" y2="174" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F2F6FB"/>
+      <stop offset="1" stop-color="#96A5B8"/>
+    </linearGradient>
+  </defs>
+  <rect width="320" height="200" rx="26" fill="url(#bg)"/>
+  <circle cx="73" cy="48" r="30" fill="#DDE6F2" fill-opacity="0.22"/>
+  <circle cx="257" cy="155" r="40" fill="#DDE6F2" fill-opacity="0.14"/>
+  <circle cx="166" cy="103" r="52" fill="url(#coin)"/>
+  <circle cx="166" cy="103" r="42" stroke="#F8FBFF" stroke-opacity="0.8" stroke-width="3"/>
+  <path d="M140 103H192" stroke="#4E5E72" stroke-width="4" stroke-linecap="round"/>
+  <path d="M166 79V127" stroke="#4E5E72" stroke-width="4" stroke-linecap="round"/>
+  <text x="26" y="168" fill="#E5EDF7" font-family="monospace" font-size="24" font-weight="700">SILVER</text>
+</svg>

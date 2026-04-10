@@ -43,6 +43,16 @@ This stack is isolated from your old project using different container names, in
 - `curl -fsS http://127.0.0.1:8087/api/ohlc/backfill/status`
 - `docker compose --project-name nepse_tracker --env-file .env -f docker-compose.prod.yml logs --tail=200 tracker-backend | grep -i "automatic OHLC backfill\|Started automatic OHLC backfill"`
 
+## 5.3) Add watchdog (recommended)
+- Make script executable:
+  - `chmod +x scripts/vps-backfill-watchdog.sh`
+- Run once manually:
+  - `APP_PORT=8087 MAX_COMPLETED_AGE_HOURS=30 ./scripts/vps-backfill-watchdog.sh`
+- Add cron (every 2 hours):
+  - `crontab -e`
+  - Add line:
+    - `0 */2 * * * cd /opt/tracker && APP_PORT=8087 MAX_COMPLETED_AGE_HOURS=30 ./scripts/vps-backfill-watchdog.sh >> /var/log/tracker-backfill-watchdog.log 2>&1`
+
 ## 6) Logs
 - docker compose --project-name nepse_tracker logs -f tracker-frontend
 - docker compose --project-name nepse_tracker logs -f tracker-backend

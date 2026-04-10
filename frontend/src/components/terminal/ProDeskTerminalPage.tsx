@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import dieselRateVisual from '../../assets/visuals/diesel-rate.svg';
+import goldRateVisual from '../../assets/visuals/gold-rate.svg';
+import petrolRateVisual from '../../assets/visuals/petrol-rate.svg';
+import silverRateVisual from '../../assets/visuals/silver-rate.svg';
 import {
   fetchAppliedIpoAlerts,
   fetchEconomicNews,
@@ -193,6 +197,22 @@ function sentimentClass(sentiment: 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL'): string 
 
 function scopeLabel(scope: 'COMPANY' | 'SECTOR' | 'MARKET' | 'MACRO'): string {
   return scope === 'MARKET' ? 'MARKET WIDE' : scope;
+}
+
+function macroVisualForItem(item: { impact: 'HIGH' | 'MEDIUM' | 'LOW'; sentiment: 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL' }): string {
+  if (item.impact === 'HIGH' || item.sentiment === 'NEGATIVE') {
+    return petrolRateVisual;
+  }
+
+  if (item.sentiment === 'POSITIVE') {
+    return goldRateVisual;
+  }
+
+  if (item.impact === 'MEDIUM') {
+    return dieselRateVisual;
+  }
+
+  return silverRateVisual;
 }
 
 function signalClass(signal: 'BUY' | 'SELL'): string {
@@ -542,6 +562,8 @@ export function ProDeskTerminalPage() {
         price: livePriceMap.get('GOLD')?.value ?? null,
         unit: 'per tola',
         accent: 'text-amber-200',
+        visual: goldRateVisual,
+        chip: 'Bullion',
       },
       {
         key: 'SILVER' as const,
@@ -549,6 +571,8 @@ export function ProDeskTerminalPage() {
         price: livePriceMap.get('SILVER')?.value ?? null,
         unit: 'per tola',
         accent: 'text-zinc-200',
+        visual: silverRateVisual,
+        chip: 'Bullion',
       },
       {
         key: 'PETROL' as const,
@@ -556,6 +580,8 @@ export function ProDeskTerminalPage() {
         price: livePriceMap.get('PETROL')?.value ?? null,
         unit: 'per litre',
         accent: 'text-terminal-red',
+        visual: petrolRateVisual,
+        chip: 'Fuel',
       },
       {
         key: 'DIESEL' as const,
@@ -563,6 +589,8 @@ export function ProDeskTerminalPage() {
         price: livePriceMap.get('DIESEL')?.value ?? null,
         unit: 'per litre',
         accent: 'text-cyan-200',
+        visual: dieselRateVisual,
+        chip: 'Fuel',
       },
     ],
     [livePriceMap],
@@ -621,26 +649,31 @@ export function ProDeskTerminalPage() {
       to: '/execution',
       title: 'Execution Calculator',
       detail: 'Accurate NEPSE buy/sell cost simulation with scenario planning.',
+      icon: 'EX',
     },
     {
       to: '/edge-suite',
       title: 'Trade + Signal Suite',
       detail: 'Daily notebook, smart alerts, and risk-first playbook workflow.',
+      icon: 'SU',
     },
     {
       to: '/live-market',
       title: 'Live Market',
       detail: 'Real-time watchlist, turnover depth, and directional momentum scan.',
+      icon: 'LM',
     },
     {
       to: '/floorsheet-lab',
       title: 'Floorsheet Lab',
       detail: 'Broker flow intelligence, block print radar, and inventory transfer alerts.',
+      icon: 'FL',
     },
     {
       to: '/market-news',
       title: 'Economy News',
       detail: 'Macro and policy headlines filtered for NEPSE trading impact.',
+      icon: 'NW',
     },
   ];
 
@@ -653,6 +686,36 @@ export function ProDeskTerminalPage() {
           Built for disciplined execution: live regime, signal quality, macro risk, and ready-to-trade workflow in one screen.
         </p>
       </header>
+
+      {ipoAlerts.length ? (
+        <section className="terminal-card overflow-hidden border-cyan-500/30 p-4 sm:p-5">
+          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_14%_14%,rgba(34,211,238,0.2),transparent_36%),radial-gradient(circle_at_84%_14%,rgba(239,68,68,0.17),transparent_32%)]" />
+          <div className="relative flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-xs uppercase tracking-[0.2em] text-cyan-300">IPO Notify Center</p>
+              <p className="mt-1 text-sm text-zinc-200">
+                {pendingIpoCount > 0
+                  ? `${pendingIpoCount} IPO notifications need action right now.`
+                  : 'All IPO notifications are marked as applied.'}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {pendingIpoCount > 0 ? (
+                <span className="animate-pulse rounded-md border border-terminal-red/70 bg-terminal-red/20 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-terminal-red">
+                  IPO Bell Active
+                </span>
+              ) : (
+                <span className="rounded-md border border-terminal-green/70 bg-terminal-green/15 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-terminal-green">
+                  IPO Clear
+                </span>
+              )}
+              <a href="#ipo-alerts" className="terminal-btn text-xs">
+                Open IPO Notify
+              </a>
+            </div>
+          </div>
+        </section>
+      ) : null}
 
       <section className="terminal-card overflow-hidden">
         <div className="relative">
@@ -744,11 +807,11 @@ export function ProDeskTerminalPage() {
       </section>
 
       {ipoAlerts.length ? (
-        <section className="terminal-card p-4 sm:p-5">
+        <section id="ipo-alerts" className="terminal-card p-4 sm:p-5">
           <header className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">IPO Auto Alerts</p>
-              <h2 className="mt-1 text-lg font-semibold text-white">New IPO Opportunities</h2>
+              <h2 className="mt-1 text-lg font-semibold text-white">New IPO Opportunities <span className="text-terminal-amber">🔔</span></h2>
               <p className="mt-1 text-[11px] text-zinc-500">
                 Sync: {ipoSyncMode === 'SERVER' ? 'Account linked (all devices)' : 'This browser only'}
               </p>
@@ -845,9 +908,19 @@ export function ProDeskTerminalPage() {
             const hasDecimals = card.key === 'SILVER' || card.key === 'PETROL' || card.key === 'DIESEL';
 
             return (
-              <article key={card.key} className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
-                <p className="text-xs uppercase tracking-wide text-zinc-500">{card.title}</p>
-                <p className={`mt-2 font-mono text-2xl font-bold ${card.accent}`}>
+              <article key={card.key} className="rate-visual-card rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs uppercase tracking-wide text-zinc-500">{card.title}</p>
+                  <span className="rounded-md border border-zinc-700/80 bg-zinc-900/80 px-2 py-0.5 text-[10px] uppercase tracking-wide text-zinc-300">
+                    {card.chip}
+                  </span>
+                </div>
+
+                <div className="rate-visual-media mt-2">
+                  <img src={card.visual} alt={`${card.title} visual`} className="rate-visual-image" loading="lazy" />
+                </div>
+
+                <p className={`mt-3 font-mono text-2xl font-bold ${card.accent}`}>
                   NPR {formatNprValue(card.price, hasDecimals ? 2 : 0)}
                 </p>
                 <p className="mt-1 text-[11px] text-zinc-500">{card.unit}</p>
@@ -1047,7 +1120,10 @@ export function ProDeskTerminalPage() {
           <div className="mt-4 grid gap-2 sm:grid-cols-2">
             {moduleLinks.map((module) => (
               <Link key={module.to} to={module.to} className="rounded-lg border border-zinc-700 bg-zinc-950/70 p-3 transition hover:border-cyan-400/70 hover:bg-cyan-500/10">
-                <p className="text-sm font-semibold text-zinc-100">{module.title}</p>
+                <div className="flex items-center gap-2">
+                  <span className="nav-code-pill">{module.icon}</span>
+                  <p className="text-sm font-semibold text-zinc-100">{module.title}</p>
+                </div>
                 <p className="mt-1 text-xs text-zinc-500">{module.detail}</p>
               </Link>
             ))}
@@ -1131,9 +1207,19 @@ export function ProDeskTerminalPage() {
                       <span className="text-[11px] uppercase tracking-wide text-zinc-500">{item.source}</span>
                       <span className="text-[11px] text-zinc-600">{formatRelativeAge(item.publishedDate)}</span>
                     </div>
-                    <p className="mt-2 text-sm font-semibold text-zinc-200">{item.headline}</p>
-                    <p className="mt-1 text-xs leading-relaxed text-zinc-400">{summary}</p>
-                    <p className="mt-1 text-[11px] text-zinc-500">{item.marketEffect}</p>
+                    <div className="mt-2 flex gap-3">
+                      <img
+                        src={macroVisualForItem(item)}
+                        alt="Market visual"
+                        className="h-16 w-24 rounded-md border border-zinc-700/70 object-cover"
+                        loading="lazy"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold text-zinc-200">{item.headline}</p>
+                        <p className="mt-1 text-xs leading-relaxed text-zinc-400">{summary}</p>
+                        <p className="mt-1 text-[11px] text-zinc-500">{item.marketEffect}</p>
+                      </div>
+                    </div>
                     <div className="mt-3 flex justify-end">
                       <a
                         href={item.url}

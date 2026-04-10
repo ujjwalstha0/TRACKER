@@ -1,0 +1,21 @@
+<svg width="320" height="200" viewBox="0 0 320 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="320" y2="200" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6D1111"/>
+      <stop offset="1" stop-color="#170808"/>
+    </linearGradient>
+    <linearGradient id="pump" x1="110" y1="56" x2="230" y2="156" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FF9A8A"/>
+      <stop offset="1" stop-color="#C92020"/>
+    </linearGradient>
+  </defs>
+  <rect width="320" height="200" rx="26" fill="url(#bg)"/>
+  <circle cx="58" cy="52" r="30" fill="#FFB4A8" fill-opacity="0.2"/>
+  <circle cx="272" cy="152" r="38" fill="#FFB4A8" fill-opacity="0.13"/>
+  <rect x="122" y="58" width="86" height="100" rx="10" fill="url(#pump)"/>
+  <rect x="136" y="74" width="58" height="34" rx="6" fill="#FFE3DF" fill-opacity="0.85"/>
+  <rect x="147" y="122" width="36" height="22" rx="4" fill="#7A1414"/>
+  <path d="M205 74C224 74 230 84 230 95V122" stroke="#FFB5A7" stroke-width="6" stroke-linecap="round"/>
+  <path d="M230 122C230 130 238 135 246 135" stroke="#FFB5A7" stroke-width="6" stroke-linecap="round"/>
+  <text x="24" y="168" fill="#FFD9D3" font-family="monospace" font-size="24" font-weight="700">PETROL</text>
+</svg>
