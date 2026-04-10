@@ -121,6 +121,118 @@ export interface MarketStatusResponse {
   asOf: string | null;
 }
 
+export type FloorsheetPressureLabel = 'ACCUMULATION' | 'DISTRIBUTION' | 'TWO_WAY';
+export type FloorsheetAlertSeverity = 'HIGH' | 'MEDIUM' | 'LOW';
+export type FloorsheetAlertType =
+  | 'BLOCK_PRINT'
+  | 'BROKER_ACCUMULATION'
+  | 'BROKER_DISTRIBUTION'
+  | 'BROKER_CONCENTRATION'
+  | 'FLOW_CHURN';
+
+export interface FloorsheetTradeRow {
+  symbol: string;
+  contractNo: string | null;
+  buyerBroker: string | null;
+  sellerBroker: string | null;
+  quantity: number;
+  rate: number;
+  amount: number;
+  tradedAt: string | null;
+}
+
+export interface FloorsheetBrokerFlowRow {
+  broker: string;
+  boughtQty: number;
+  soldQty: number;
+  boughtAmount: number;
+  soldAmount: number;
+  netQty: number;
+  netAmount: number;
+  tradedAmount: number;
+  tradeCount: number;
+  symbolCount: number;
+}
+
+export interface FloorsheetPressure {
+  label: FloorsheetPressureLabel;
+  transferScore: number;
+  dominancePct: number;
+  concentrationPct: number;
+}
+
+export interface FloorsheetSymbolInsight {
+  symbol: string;
+  tradeCount: number;
+  quantity: number;
+  amount: number;
+  weightedAvgRate: number;
+  avgTradeAmount: number;
+  uniqueBuyers: number;
+  uniqueSellers: number;
+  brokerParticipation: number;
+  blockTradeCount: number;
+  largestPrintAmount: number;
+  largestPrintQty: number;
+  topBuyerBroker: string | null;
+  topSellerBroker: string | null;
+  topBuyerNetAmount: number;
+  topSellerNetAmount: number;
+  pressure: FloorsheetPressure;
+  highlights: string[];
+}
+
+export interface FloorsheetAlert {
+  type: FloorsheetAlertType;
+  severity: FloorsheetAlertSeverity;
+  title: string;
+  detail: string;
+  symbol: string | null;
+  broker: string | null;
+  value: number | null;
+}
+
+export interface FloorsheetDeskResponse {
+  asOf: string;
+  source: 'sharesansar';
+  scannedSymbols: number;
+  requestedSymbols: number;
+  rowsPerSymbol: number;
+  symbols: FloorsheetSymbolInsight[];
+  alerts: FloorsheetAlert[];
+  brokers: {
+    netBuyers: FloorsheetBrokerFlowRow[];
+    netSellers: FloorsheetBrokerFlowRow[];
+    mostActive: FloorsheetBrokerFlowRow[];
+  };
+}
+
+export interface FloorsheetSymbolResponse {
+  asOf: string;
+  source: 'sharesansar';
+  symbol: string;
+  filters: {
+    rows: number;
+    buyer: string | null;
+    seller: string | null;
+  };
+  meta: {
+    recordsTotal: number;
+    recordsFiltered: number;
+    qtyTotal: number;
+    amtTotal: number;
+  };
+  insight: FloorsheetSymbolInsight;
+  alerts: FloorsheetAlert[];
+  topPrints: FloorsheetTradeRow[];
+  brokerFlows: {
+    topNetBuyers: FloorsheetBrokerFlowRow[];
+    topNetSellers: FloorsheetBrokerFlowRow[];
+    mostActive: FloorsheetBrokerFlowRow[];
+  };
+  trades: FloorsheetTradeRow[];
+}
+
 export interface OhlcCandle {
   t: string;
   o: number;
@@ -128,6 +240,45 @@ export interface OhlcCandle {
   l: number;
   c: number;
   v: number | null;
+}
+
+export interface OhlcBackfillRequest {
+  symbolsLimit?: number;
+  sinceDays?: number;
+  throttleMs?: number;
+}
+
+export interface OhlcBackfillSymbolReport {
+  symbol: string;
+  companyId: number;
+  fetchedRows: number;
+  insertedCandles: number;
+  newestDate: string | null;
+  oldestDate: string | null;
+  error: string | null;
+}
+
+export type OhlcBackfillJobStatus = 'IDLE' | 'RUNNING' | 'COMPLETED' | 'FAILED';
+
+export interface OhlcBackfillJobState {
+  jobId: string | null;
+  status: OhlcBackfillJobStatus;
+  startedAt: string | null;
+  finishedAt: string | null;
+  options: {
+    symbolsLimit: number;
+    sinceDays: number | null;
+    throttleMs: number;
+  };
+  progress: {
+    totalSymbols: number;
+    processedSymbols: number;
+    totalFetchedRows: number;
+    totalInsertedCandles: number;
+    currentSymbol: string | null;
+  };
+  recentReports: OhlcBackfillSymbolReport[];
+  error: string | null;
 }
 
 export interface IndicatorPoint {

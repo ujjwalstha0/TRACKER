@@ -5,6 +5,7 @@ import { AuthModule } from './auth/auth.module';
 import scrapeConfig from './config/scrape.config';
 import { ExecutionDecisionsModule } from './execution-decisions/execution-decisions.module';
 import { FeesModule } from './fees/fees.module';
+import { FloorsheetModule } from './floorsheet/floorsheet.module';
 import { IndicatorsModule } from './indicators/indicators.module';
 import { IndicesModule } from './indices/indices.module';
 import { NewsModule } from './news/news.module';
@@ -45,6 +46,7 @@ import { WatchlistModule } from './watchlist/watchlist.module';
     WatchlistModule,
     IndicesModule,
     NewsModule,
+    FloorsheetModule,
     OhlcModule,
     IndicatorsModule,
     SignalModule,

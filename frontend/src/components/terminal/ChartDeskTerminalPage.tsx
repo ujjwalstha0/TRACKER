@@ -2,15 +2,28 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ApexAxisChartSeries, ApexOptions } from 'apexcharts';
 import ReactApexChart from 'react-apexcharts';
 import { useNavigate, useParams } from 'react-router-dom';
-import { fetchIndicators, fetchSignal, fetchWatchlist } from '../../lib/api';
+import {
+  backfillOhlcSymbol,
+  fetchIndicators,
+  fetchOhlcBackfillStatus,
+  fetchSignal,
+  fetchWatchlist,
+  startOhlcBackfill,
+} from '../../lib/api';
 import { confidenceBadgeClass, signalBadgeClass } from '../../lib/signal-ui';
-import { IndicatorsResponse, TradingSignalResponse, WatchlistApiRow } from '../../types';
+import {
+  IndicatorsResponse,
+  OhlcBackfillJobState,
+  TradingSignalResponse,
+  WatchlistApiRow,
+} from '../../types';
 
 const INTERVALS = ['1m', '5m', '15m', '1h', '1d'] as const;
 type Interval = (typeof INTERVALS)[number];
 
 const CHART_REFRESH_INTERVAL_MS = 60_000;
 const SIGNAL_REFRESH_INTERVAL_MS = 60_000;
+const BACKFILL_STATUS_REFRESH_MS = 4_500;
 
 function formatMoney(value: number): string {
   return new Intl.NumberFormat('en-IN', {
@@ -40,10 +53,26 @@ function readStoredValue(key: string, fallback: string): string {
   return raw && raw.trim() ? raw : fallback;
 }
 
+function parsePositiveInt(value: string): number | undefined {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return undefined;
+  }
+
+  return Math.floor(parsed);
+}
+
 function actionabilityClass(label: 'EXECUTABLE' | 'WATCH' | 'BLOCKED'): string {
   if (label === 'EXECUTABLE') return 'border-terminal-green/70 bg-terminal-green/15 text-terminal-green';
   if (label === 'WATCH') return 'border-terminal-amber/70 bg-terminal-amber/15 text-terminal-amber';
   return 'border-terminal-red/70 bg-terminal-red/15 text-terminal-red';
+}
+
+function backfillStatusClass(status: string): string {
+  if (status === 'RUNNING') return 'border-cyan-300/70 bg-cyan-500/15 text-cyan-100';
+  if (status === 'COMPLETED') return 'border-terminal-green/70 bg-terminal-green/15 text-terminal-green';
+  if (status === 'FAILED') return 'border-terminal-red/70 bg-terminal-red/15 text-terminal-red';
+  return 'border-zinc-700 bg-zinc-900/70 text-zinc-300';
 }
 
 export function ChartDeskTerminalPage() {
@@ -67,6 +96,17 @@ export function ChartDeskTerminalPage() {
   const [minQuality, setMinQuality] = useState(() => readStoredValue('chartdesk.minQuality', '82'));
   const [minRiskReward, setMinRiskReward] = useState(() => readStoredValue('chartdesk.minRR', '1.8'));
   const [minSampleSize, setMinSampleSize] = useState(() => readStoredValue('chartdesk.minSample', '10'));
+  const [backfillState, setBackfillState] = useState<OhlcBackfillJobState | null>(null);
+  const [backfillBusy, setBackfillBusy] = useState(false);
+  const [symbolBackfillBusy, setSymbolBackfillBusy] = useState(false);
+  const [backfillFeedback, setBackfillFeedback] = useState('');
+  const [backfillError, setBackfillError] = useState('');
+  const [backfillSymbolsLimit, setBackfillSymbolsLimit] = useState(() =>
+    readStoredValue('chartdesk.backfillSymbolsLimit', '220'),
+  );
+  const [backfillSinceDays, setBackfillSinceDays] = useState(() =>
+    readStoredValue('chartdesk.backfillSinceDays', ''),
+  );
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -74,6 +114,12 @@ export function ChartDeskTerminalPage() {
     window.localStorage.setItem('chartdesk.minRR', minRiskReward);
     window.localStorage.setItem('chartdesk.minSample', minSampleSize);
   }, [minQuality, minRiskReward, minSampleSize]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('chartdesk.backfillSymbolsLimit', backfillSymbolsLimit);
+    window.localStorage.setItem('chartdesk.backfillSinceDays', backfillSinceDays);
+  }, [backfillSinceDays, backfillSymbolsLimit]);
 
   useEffect(() => {
     fetchWatchlist()
@@ -149,6 +195,97 @@ export function ChartDeskTerminalPage() {
     }
   }, [interval, selectedSymbol]);
 
+  const loadBackfillStatus = useCallback(async () => {
+    try {
+      const status = await fetchOhlcBackfillStatus();
+      setBackfillState(status);
+    } catch {
+      // Keep chart interactions responsive even if status polling fails.
+    }
+  }, []);
+
+  const buildBackfillRequest = useCallback(() => {
+    const request: {
+      symbolsLimit?: number;
+      sinceDays?: number;
+      throttleMs?: number;
+    } = {
+      throttleMs: 45,
+    };
+
+    const symbolsLimit = parsePositiveInt(backfillSymbolsLimit);
+    const sinceDays = parsePositiveInt(backfillSinceDays);
+
+    if (symbolsLimit) {
+      request.symbolsLimit = symbolsLimit;
+    }
+
+    if (sinceDays) {
+      request.sinceDays = sinceDays;
+    }
+
+    return request;
+  }, [backfillSinceDays, backfillSymbolsLimit]);
+
+  const startAllBackfill = useCallback(async () => {
+    setBackfillBusy(true);
+    setBackfillError('');
+    setBackfillFeedback('');
+
+    try {
+      const request = buildBackfillRequest();
+      const status = await startOhlcBackfill(request);
+      setBackfillState(status);
+      setBackfillFeedback(
+        status.status === 'RUNNING'
+          ? 'Historical bootstrap started. Chart quality improves as candles are imported.'
+          : `Backfill state: ${status.status}`,
+      );
+    } catch (requestError) {
+      setBackfillError(requestError instanceof Error ? requestError.message : 'Failed to start OHLC backfill.');
+    } finally {
+      setBackfillBusy(false);
+    }
+  }, [buildBackfillRequest]);
+
+  const backfillSelectedSymbol = useCallback(async () => {
+    if (!selectedSymbol) return;
+
+    setSymbolBackfillBusy(true);
+    setBackfillError('');
+    setBackfillFeedback('');
+
+    try {
+      const report = await backfillOhlcSymbol(selectedSymbol, {
+        sinceDays: parsePositiveInt(backfillSinceDays),
+        throttleMs: 0,
+      });
+
+      if (report.error) {
+        setBackfillError(report.error);
+      } else {
+        setBackfillFeedback(
+          `${report.symbol}: imported ${report.insertedCandles} candles from ${report.fetchedRows} rows.`,
+        );
+      }
+
+      await loadData();
+      try {
+        const refreshedSignal = await fetchSignal(selectedSymbol);
+        setSignal(refreshedSignal);
+      } catch {
+        // Leave previous signal payload in place if refresh fails.
+      }
+      await loadBackfillStatus();
+    } catch (requestError) {
+      setBackfillError(
+        requestError instanceof Error ? requestError.message : 'Failed to backfill selected symbol history.',
+      );
+    } finally {
+      setSymbolBackfillBusy(false);
+    }
+  }, [backfillSinceDays, loadBackfillStatus, loadData, selectedSymbol]);
+
   useEffect(() => {
     void loadData();
 
@@ -158,6 +295,28 @@ export function ChartDeskTerminalPage() {
 
     return () => window.clearInterval(timer);
   }, [loadData]);
+
+  useEffect(() => {
+    void loadBackfillStatus();
+  }, [loadBackfillStatus]);
+
+  useEffect(() => {
+    if (backfillState?.status !== 'RUNNING') {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      void loadBackfillStatus();
+    }, BACKFILL_STATUS_REFRESH_MS);
+
+    return () => window.clearInterval(timer);
+  }, [backfillState?.status, loadBackfillStatus]);
+
+  useEffect(() => {
+    if (backfillState?.status === 'COMPLETED') {
+      void loadData();
+    }
+  }, [backfillState?.status, loadData]);
 
   useEffect(() => {
     if (!selectedSymbol) {
@@ -425,6 +584,16 @@ export function ChartDeskTerminalPage() {
     () => watchlist.find((row) => row.symbol === selectedSymbol) ?? null,
     [selectedSymbol, watchlist],
   );
+  const backfillProgressPct = useMemo(() => {
+    if (!backfillState || backfillState.progress.totalSymbols <= 0) {
+      return 0;
+    }
+
+    const ratio = backfillState.progress.processedSymbols / backfillState.progress.totalSymbols;
+    return Math.max(0, Math.min(100, Math.round(ratio * 100)));
+  }, [backfillState]);
+
+  const latestBackfillReport = backfillState?.recentReports[0] ?? null;
 
   const actionability = useMemo(() => {
     const minQualityValue = Number(minQuality);
@@ -841,6 +1010,105 @@ export function ChartDeskTerminalPage() {
           <button type="button" onClick={() => void loadData()} className="terminal-btn ml-auto">
             {loading ? 'Refreshing...' : 'Refresh'}
           </button>
+        </div>
+
+        <div className="rounded-lg border border-cyan-900/60 bg-cyan-950/20 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-[10px] uppercase tracking-wide text-cyan-200/90">Historical Bootstrap (One-Time)</p>
+            <span
+              className={`rounded-md border px-2 py-1 text-[10px] font-semibold uppercase tracking-wide ${backfillStatusClass(backfillState?.status ?? 'IDLE')}`}
+            >
+              {backfillState?.status ?? 'IDLE'}
+            </span>
+          </div>
+
+          <p className="mt-1 text-xs text-zinc-300">
+            Pull deep candle history once to strengthen indicators, signals, and chart confidence.
+          </p>
+
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-[0.9fr_0.9fr_1fr]">
+            <label className="text-[11px] text-zinc-400">
+              Symbols Limit
+              <input
+                type="number"
+                min={20}
+                max={450}
+                value={backfillSymbolsLimit}
+                onChange={(event) => setBackfillSymbolsLimit(event.target.value)}
+                className="terminal-input mt-1 font-mono"
+                disabled={backfillState?.status === 'RUNNING'}
+              />
+            </label>
+
+            <label className="text-[11px] text-zinc-400">
+              Since Days (optional)
+              <input
+                type="number"
+                min={1}
+                placeholder="Blank = full history"
+                value={backfillSinceDays}
+                onChange={(event) => setBackfillSinceDays(event.target.value)}
+                className="terminal-input mt-1 font-mono"
+                disabled={backfillState?.status === 'RUNNING'}
+              />
+            </label>
+
+            <div className="rounded-lg border border-zinc-800 bg-black/30 p-2 text-xs text-zinc-300">
+              <p>
+                Progress: {backfillState?.progress.processedSymbols ?? 0} / {backfillState?.progress.totalSymbols ?? 0}{' '}
+                symbols ({backfillProgressPct}%)
+              </p>
+              <p>Rows fetched: {backfillState?.progress.totalFetchedRows ?? 0}</p>
+              <p>Candles inserted: {backfillState?.progress.totalInsertedCandles ?? 0}</p>
+              {backfillState?.progress.currentSymbol ? (
+                <p>Current: {backfillState.progress.currentSymbol}</p>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="mt-3 h-2 rounded-full bg-zinc-900/80">
+            <div
+              className="h-2 rounded-full bg-cyan-400 transition-all duration-300"
+              style={{ width: `${backfillProgressPct}%` }}
+            />
+          </div>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => void startAllBackfill()}
+              disabled={backfillBusy || backfillState?.status === 'RUNNING'}
+              className="terminal-btn-primary disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {backfillState?.status === 'RUNNING'
+                ? 'Backfill Running...'
+                : backfillBusy
+                  ? 'Starting...'
+                  : 'Backfill All Symbols'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void backfillSelectedSymbol()}
+              disabled={symbolBackfillBusy || !selectedSymbol || backfillState?.status === 'RUNNING'}
+              className="terminal-btn disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {symbolBackfillBusy ? 'Importing Symbol...' : `Backfill ${selectedSymbol || 'Symbol'} Only`}
+            </button>
+            <button type="button" onClick={() => void loadBackfillStatus()} className="terminal-btn">
+              Refresh Backfill Status
+            </button>
+          </div>
+
+          {latestBackfillReport ? (
+            <p className="mt-2 text-xs text-zinc-300">
+              Last report: {latestBackfillReport.symbol} added {latestBackfillReport.insertedCandles} candles
+              {latestBackfillReport.error ? ` (error: ${latestBackfillReport.error})` : ''}.
+            </p>
+          ) : null}
+
+          {backfillState?.error ? <p className="mt-2 text-xs text-terminal-red">{backfillState.error}</p> : null}
+          {backfillFeedback ? <p className="mt-2 text-xs text-terminal-green">{backfillFeedback}</p> : null}
+          {backfillError ? <p className="mt-2 text-xs text-terminal-red">{backfillError}</p> : null}
         </div>
 
         {error ? <p className="text-sm font-medium text-terminal-red">{error}</p> : null}

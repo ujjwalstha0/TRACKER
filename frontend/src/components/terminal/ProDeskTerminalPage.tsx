@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   fetchEconomicNews,
+  fetchFloorsheetDesk,
   fetchIndices,
   fetchMarketStatus,
   fetchSignalNotebookToday,
@@ -9,6 +10,7 @@ import {
 } from '../../lib/api';
 import {
   EconomicNewsResponse,
+  FloorsheetDeskResponse,
   IndexApiRow,
   MarketStatusResponse,
   SignalNotebookResponse,
@@ -104,6 +106,18 @@ function signalClass(signal: 'BUY' | 'SELL'): string {
     : 'border-terminal-red/70 bg-terminal-red/15 text-terminal-red';
 }
 
+function floorsheetAlertClass(severity: 'HIGH' | 'MEDIUM' | 'LOW'): string {
+  if (severity === 'HIGH') return 'border-terminal-red/70 bg-terminal-red/20 text-terminal-red';
+  if (severity === 'MEDIUM') return 'border-terminal-amber/70 bg-terminal-amber/20 text-terminal-amber';
+  return 'border-cyan-400/70 bg-cyan-500/15 text-cyan-100';
+}
+
+function floorsheetPressureClass(label: 'ACCUMULATION' | 'DISTRIBUTION' | 'TWO_WAY'): string {
+  if (label === 'ACCUMULATION') return 'border-terminal-green/70 bg-terminal-green/15 text-terminal-green';
+  if (label === 'DISTRIBUTION') return 'border-terminal-red/70 bg-terminal-red/15 text-terminal-red';
+  return 'border-terminal-amber/70 bg-terminal-amber/15 text-terminal-amber';
+}
+
 function computeRegime(indices: IndexApiRow[], watchlist: WatchlistApiRow[]): RegimeSnapshot {
   const nepse = indices.find((row) => row.indexName.toLowerCase().includes('nepse'));
   const nepseChangePct = nepse?.change_pct ?? 0;
@@ -176,6 +190,7 @@ export function ProDeskTerminalPage() {
   const [watchlist, setWatchlist] = useState<WatchlistApiRow[]>([]);
   const [notebook, setNotebook] = useState<SignalNotebookResponse | null>(null);
   const [news, setNews] = useState<EconomicNewsResponse | null>(null);
+  const [floorsheetDesk, setFloorsheetDesk] = useState<FloorsheetDeskResponse | null>(null);
   const [marketStatus, setMarketStatus] = useState<MarketStatusResponse>(DEFAULT_MARKET_STATUS);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -184,12 +199,13 @@ export function ProDeskTerminalPage() {
   const loadDesk = useCallback(async () => {
     setLoading(true);
 
-    const [indicesRes, watchlistRes, notebookRes, newsRes, marketStatusRes] = await Promise.allSettled([
+    const [indicesRes, watchlistRes, notebookRes, newsRes, marketStatusRes, floorsheetRes] = await Promise.allSettled([
       fetchIndices(),
       fetchWatchlist(),
       fetchSignalNotebookToday(),
       fetchEconomicNews(20),
       fetchMarketStatus(),
+      fetchFloorsheetDesk({ symbols: 5, rows: 90 }),
     ]);
 
     let successfulCalls = 0;
@@ -216,6 +232,11 @@ export function ProDeskTerminalPage() {
 
     if (marketStatusRes.status === 'fulfilled') {
       setMarketStatus(marketStatusRes.value);
+      successfulCalls += 1;
+    }
+
+    if (floorsheetRes.status === 'fulfilled') {
+      setFloorsheetDesk(floorsheetRes.value);
       successfulCalls += 1;
     }
 
@@ -276,6 +297,14 @@ export function ProDeskTerminalPage() {
     [news?.items],
   );
 
+  const floorsheetAlerts = useMemo(() => {
+    return [...(floorsheetDesk?.alerts ?? [])].slice(0, 4);
+  }, [floorsheetDesk?.alerts]);
+
+  const floorsheetSymbols = useMemo(() => {
+    return [...(floorsheetDesk?.symbols ?? [])].slice(0, 5);
+  }, [floorsheetDesk?.symbols]);
+
   const notebookSummary = notebook?.summary;
 
   const operatingPlan = useMemo(() => {
@@ -323,6 +352,11 @@ export function ProDeskTerminalPage() {
       to: '/live-market',
       title: 'Live Market',
       detail: 'Real-time watchlist, turnover depth, and directional momentum scan.',
+    },
+    {
+      to: '/floorsheet-lab',
+      title: 'Floorsheet Lab',
+      detail: 'Broker flow intelligence, block print radar, and inventory transfer alerts.',
     },
     {
       to: '/market-news',
@@ -451,6 +485,89 @@ export function ProDeskTerminalPage() {
             <p className="mt-1 text-sm text-zinc-500">Avoid: {operatingPlan.avoid}</p>
           </div>
         </div>
+      </section>
+
+      <section className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
+        <article className="terminal-card p-4 sm:p-5">
+          <header className="flex items-center justify-between gap-2">
+            <div>
+              <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Floorsheet Intelligence</p>
+              <h2 className="mt-1 text-lg font-semibold text-white">Must-Watch Broker Flow Alerts</h2>
+            </div>
+            <Link to="/floorsheet-lab" className="terminal-btn text-xs">Open Floorsheet Lab</Link>
+          </header>
+
+          <div className="mt-4 space-y-2">
+            {floorsheetAlerts.length ? (
+              floorsheetAlerts.map((alert, index) => (
+                <div key={`${alert.title}-${index}`} className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={`rounded-md border px-2 py-1 text-[10px] font-semibold tracking-wide ${floorsheetAlertClass(alert.severity)}`}>
+                      {alert.severity}
+                    </span>
+                    <span className="text-[11px] uppercase tracking-wide text-zinc-500">{alert.type.replace(/_/g, ' ')}</span>
+                  </div>
+                  <p className="mt-2 text-sm text-zinc-100">{alert.title}</p>
+                  <p className="mt-1 text-xs text-zinc-400">{alert.detail}</p>
+                </div>
+              ))
+            ) : (
+              <p className="text-sm text-zinc-500">No floorsheet alerts available from current symbol scan.</p>
+            )}
+          </div>
+        </article>
+
+        <article className="terminal-card p-4 sm:p-5">
+          <header>
+            <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Flow Hotspots</p>
+            <h2 className="mt-1 text-lg font-semibold text-white">Symbols with Active Inventory Transfer</h2>
+          </header>
+
+          <div className="mt-4 space-y-2">
+            {floorsheetSymbols.length ? (
+              floorsheetSymbols.map((row) => {
+                const side = row.pressure.label === 'DISTRIBUTION' ? 'sell' : 'buy';
+                const entry = row.weightedAvgRate;
+                const stop = side === 'buy' ? entry * 0.97 : entry * 1.03;
+                const target = side === 'buy' ? entry * 1.06 : entry * 0.94;
+
+                return (
+                  <div key={`fl-${row.symbol}`} className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="font-mono text-sm text-zinc-100">{row.symbol}</p>
+                      <span className={`rounded-md border px-2 py-1 text-[10px] font-semibold tracking-wide ${floorsheetPressureClass(row.pressure.label)}`}>
+                        {row.pressure.label.replace('_', ' ')}
+                      </span>
+                    </div>
+
+                    <p className="mt-2 text-[12px] text-zinc-400">
+                      Turnover Rs {formatMoney(row.amount)} | Transfer {row.pressure.transferScore.toFixed(1)}%
+                    </p>
+                    <p className="mt-1 text-[12px] text-zinc-500">
+                      Trades {row.tradeCount} | Block prints {row.blockTradeCount} | Top buyer {row.topBuyerBroker ?? '--'}
+                    </p>
+
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <Link
+                        to={`/execution?symbol=${encodeURIComponent(row.symbol)}&side=${side}&entry=${encodeURIComponent(
+                          entry.toFixed(2),
+                        )}&stop=${encodeURIComponent(stop.toFixed(2))}&target=${encodeURIComponent(target.toFixed(2))}`}
+                        className="terminal-btn text-xs"
+                      >
+                        Plan Trade
+                      </Link>
+                      <Link to={`/chart-desk/${encodeURIComponent(row.symbol)}`} className="terminal-btn text-xs">
+                        Open Chart
+                      </Link>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <p className="text-sm text-zinc-500">Floorsheet hotspot scan is not available right now.</p>
+            )}
+          </div>
+        </article>
       </section>
 
       <section className="grid gap-5 xl:grid-cols-2">

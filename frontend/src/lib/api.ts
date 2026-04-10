@@ -5,6 +5,8 @@ import {
   CreateExecutionDecisionPayload,
   CreateHoldingPayload,
   EconomicNewsResponse,
+  FloorsheetDeskResponse,
+  FloorsheetSymbolResponse,
   ExecutionDecisionEntry,
   FeeCalculationInput,
   FeeCalculationResult,
@@ -14,6 +16,9 @@ import {
   NepseCostRequest,
   NepseCostResponse,
   OtpDispatchResponse,
+  OhlcBackfillJobState,
+  OhlcBackfillRequest,
+  OhlcBackfillSymbolReport,
   OhlcCandle,
   PortfolioResponse,
   SignalNotebookResponse,
@@ -187,6 +192,52 @@ export async function fetchMarketStatus(): Promise<MarketStatusResponse> {
   return res.json();
 }
 
+export async function fetchFloorsheetDesk(params?: {
+  symbols?: number;
+  rows?: number;
+}): Promise<FloorsheetDeskResponse> {
+  const searchParams = new URLSearchParams();
+  if (params?.symbols) searchParams.set('symbols', String(params.symbols));
+  if (params?.rows) searchParams.set('rows', String(params.rows));
+
+  const qs = searchParams.toString();
+  const res = await fetch(`${API_BASE}/floorsheet/desk${qs ? `?${qs}` : ''}`, { cache: 'no-store' });
+  if (!res.ok) {
+    throw new Error('Failed to load floorsheet desk');
+  }
+
+  return res.json();
+}
+
+export async function fetchFloorsheetSymbol(
+  symbol: string,
+  params?: {
+    rows?: number;
+    buyer?: string;
+    seller?: string;
+  },
+): Promise<FloorsheetSymbolResponse> {
+  const normalized = symbol.trim().toUpperCase();
+  const searchParams = new URLSearchParams();
+
+  if (params?.rows) searchParams.set('rows', String(params.rows));
+  if (params?.buyer) searchParams.set('buyer', params.buyer.trim());
+  if (params?.seller) searchParams.set('seller', params.seller.trim());
+
+  const qs = searchParams.toString();
+  const res = await fetch(
+    `${API_BASE}/floorsheet/symbol/${encodeURIComponent(normalized)}${qs ? `?${qs}` : ''}`,
+    { cache: 'no-store' },
+  );
+
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string | string[] };
+    throw new Error(parseErrorMessage(body, 'Failed to load symbol floorsheet'));
+  }
+
+  return res.json();
+}
+
 export async function fetchOhlc(symbol: string, interval = '1d', limit = 240): Promise<OhlcCandle[]> {
   const params = new URLSearchParams({
     symbol,
@@ -197,6 +248,54 @@ export async function fetchOhlc(symbol: string, interval = '1d', limit = 240): P
   const res = await fetch(`${API_BASE}/ohlc?${params.toString()}`, { cache: 'no-store' });
   if (!res.ok) {
     throw new Error('Failed to load OHLC data');
+  }
+
+  return res.json();
+}
+
+export async function startOhlcBackfill(request?: OhlcBackfillRequest): Promise<OhlcBackfillJobState> {
+  const res = await fetch(`${API_BASE}/ohlc/backfill/start`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request ?? {}),
+  });
+
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string | string[] };
+    throw new Error(parseErrorMessage(body, 'Failed to start OHLC backfill'));
+  }
+
+  return res.json();
+}
+
+export async function fetchOhlcBackfillStatus(): Promise<OhlcBackfillJobState> {
+  const res = await fetch(`${API_BASE}/ohlc/backfill/status`, { cache: 'no-store' });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string | string[] };
+    throw new Error(parseErrorMessage(body, 'Failed to load OHLC backfill status'));
+  }
+
+  return res.json();
+}
+
+export async function backfillOhlcSymbol(
+  symbol: string,
+  request?: OhlcBackfillRequest,
+): Promise<OhlcBackfillSymbolReport> {
+  const normalizedSymbol = symbol.trim().toUpperCase();
+  const res = await fetch(`${API_BASE}/ohlc/backfill/symbol/${encodeURIComponent(normalizedSymbol)}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request ?? {}),
+  });
+
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string | string[] };
+    throw new Error(parseErrorMessage(body, 'Failed to backfill selected symbol history'));
   }
 
   return res.json();

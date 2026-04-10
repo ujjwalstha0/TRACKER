@@ -4,6 +4,7 @@ import { AuthTerminalPage } from './components/terminal/AuthTerminalPage';
 import { CalculatorTerminalPage } from './components/terminal/CalculatorTerminalPage';
 import { ChartDeskTerminalPage } from './components/terminal/ChartDeskTerminalPage';
 import { EdgeSuiteTerminalPage } from './components/terminal/EdgeSuiteTerminalPage';
+import { FloorsheetTerminalPage } from './components/terminal/FloorsheetTerminalPage';
 import { LiveMarketTerminalPage } from './components/terminal/LiveMarketTerminalPage';
 import { MarketNewsTerminalPage } from './components/terminal/MarketNewsTerminalPage';
 import { PortfolioTerminalPage } from './components/terminal/PortfolioTerminalPage';
@@ -23,6 +24,7 @@ const PUBLIC_NAV = [
   { to: '/', label: 'Pro Desk', end: true },
   { to: '/execution', label: 'Execution' },
   { to: '/live-market', label: 'Market' },
+  { to: '/floorsheet-lab', label: 'Floorsheet Lab' },
   { to: '/market-news', label: 'Economy News' },
   { to: '/edge-suite', label: 'Trade + Signal Suite' },
 ] as NavItem[];
@@ -369,6 +371,7 @@ export default function App() {
               <Route path="/" element={<ProDeskTerminalPage />} />
               <Route path="/execution" element={<CalculatorTerminalPage />} />
               <Route path="/live-market" element={<LiveMarketTerminalPage />} />
+              <Route path="/floorsheet-lab" element={<FloorsheetTerminalPage />} />
               <Route path="/market-news" element={<MarketNewsTerminalPage />} />
               <Route path="/edge-suite" element={<EdgeSuiteTerminalPage user={user} />} />
               <Route path="/signal-dashboard" element={<Navigate to="/edge-suite" replace />} />
@@ -451,7 +454,7 @@ export default function App() {
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Platform Modules</p>
-                <p className="mt-2 text-sm text-zinc-300">Pro Desk, Execution, Market, Economy News, Trade + Signal Suite, Chart Lab, Portfolio, Journal</p>
+                <p className="mt-2 text-sm text-zinc-300">Pro Desk, Execution, Market, Floorsheet Lab, Economy News, Trade + Signal Suite, Chart Lab, Portfolio, Journal</p>
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Data Session</p>
