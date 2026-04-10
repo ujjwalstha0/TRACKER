@@ -7,6 +7,7 @@ import { EdgeSuiteTerminalPage } from './components/terminal/EdgeSuiteTerminalPa
 import { LiveMarketTerminalPage } from './components/terminal/LiveMarketTerminalPage';
 import { MarketNewsTerminalPage } from './components/terminal/MarketNewsTerminalPage';
 import { PortfolioTerminalPage } from './components/terminal/PortfolioTerminalPage';
+import { ProDeskTerminalPage } from './components/terminal/ProDeskTerminalPage';
 import { TradeJournalTerminalPage } from './components/terminal/TradeJournalTerminalPage';
 import { fetchMarketStatus, fetchMe } from './lib/api';
 import { clearAuthSession, getAuthToken, getStoredUser, setAuthSession } from './lib/auth';
@@ -19,7 +20,8 @@ interface NavItem {
 }
 
 const PUBLIC_NAV = [
-  { to: '/', label: 'Execution', end: true },
+  { to: '/', label: 'Pro Desk', end: true },
+  { to: '/execution', label: 'Execution' },
   { to: '/live-market', label: 'Market' },
   { to: '/market-news', label: 'Economy News' },
   { to: '/edge-suite', label: 'Trade + Signal Suite' },
@@ -347,8 +349,8 @@ export default function App() {
           <p className="text-xs uppercase tracking-[0.2em] text-cyan-200/80">Desk Status</p>
           <p className="mt-3 text-sm text-zinc-300 leading-relaxed">
             {user
-              ? 'Authenticated mode: portfolio risk controls, chart lab, journal analytics, and trader suite are unlocked.'
-              : 'Guest mode: execution tools, live market, and the Trade + Signal Suite are available.'}
+              ? 'Authenticated mode: Pro Desk, portfolio risk controls, chart lab, journal analytics, and suite tools are unlocked.'
+              : 'Guest mode: Pro Desk, execution tools, live market, and the Trade + Signal Suite are available.'}
           </p>
         </div>
 
@@ -364,7 +366,8 @@ export default function App() {
             <div className="terminal-card p-6 text-center text-zinc-400">Loading your workspace...</div>
           ) : (
             <Routes>
-              <Route path="/" element={<CalculatorTerminalPage />} />
+              <Route path="/" element={<ProDeskTerminalPage />} />
+              <Route path="/execution" element={<CalculatorTerminalPage />} />
               <Route path="/live-market" element={<LiveMarketTerminalPage />} />
               <Route path="/market-news" element={<MarketNewsTerminalPage />} />
               <Route path="/edge-suite" element={<EdgeSuiteTerminalPage user={user} />} />
@@ -448,7 +451,7 @@ export default function App() {
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Platform Modules</p>
-                <p className="mt-2 text-sm text-zinc-300">Execution, Market, Economy News, Trade + Signal Suite, Chart Lab, Portfolio, Journal</p>
+                <p className="mt-2 text-sm text-zinc-300">Pro Desk, Execution, Market, Economy News, Trade + Signal Suite, Chart Lab, Portfolio, Journal</p>
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Data Session</p>
