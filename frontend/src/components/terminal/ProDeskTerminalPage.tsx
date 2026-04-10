@@ -56,6 +56,7 @@ interface IpoAlertItem {
   source: string;
   url: string;
   publishedDate: string | null;
+  actionable: boolean;
 }
 
 function readAppliedIpoMap(): Record<string, string> {
@@ -81,13 +82,23 @@ function readAppliedIpoMap(): Record<string, string> {
   }
 }
 
+function isIpoMentionHeadline(headline: string): boolean {
+  const lower = headline.toLowerCase();
+
+  return (
+    /\bipo\b/.test(lower) ||
+    /initial public offering/.test(lower) ||
+    /public issue/.test(lower) ||
+    /share issue/.test(lower) ||
+    /book building/.test(lower) ||
+    /rights offering/.test(lower)
+  );
+}
+
 function isActionableIpoHeadline(headline: string): boolean {
   const lower = headline.toLowerCase();
 
-  const hasIpoSignal =
-    /\bipo\b/.test(lower) ||
-    /initial public offering/.test(lower) ||
-    /public issue/.test(lower);
+  const hasIpoSignal = isIpoMentionHeadline(headline);
 
   if (!hasIpoSignal) {
     return false;
@@ -332,7 +343,7 @@ export function ProDeskTerminalPage() {
       fetchIndices(),
       fetchWatchlist(),
       fetchSignalNotebookToday(),
-      fetchEconomicNews(20),
+      fetchEconomicNews(40),
       fetchMarketStatus(),
       fetchFloorsheetDesk({ symbols: 5, rows: 90 }),
       fetchNepalLivePrices(),
@@ -455,9 +466,9 @@ export function ProDeskTerminalPage() {
       .slice(0, 8);
   }, [news?.items]);
 
-  const ipoAlerts = useMemo<IpoAlertItem[]>(() => {
+  const ipoMentions = useMemo<IpoAlertItem[]>(() => {
     return [...(news?.items ?? [])]
-      .filter((item) => isActionableIpoHeadline(item.headline))
+      .filter((item) => isIpoMentionHeadline(item.headline))
       .sort((a, b) => {
         const dateA = Date.parse(a.publishedDate ?? '');
         const dateB = Date.parse(b.publishedDate ?? '');
@@ -466,7 +477,7 @@ export function ProDeskTerminalPage() {
 
         return normalizedB - normalizedA || b.relevanceScore - a.relevanceScore;
       })
-      .slice(0, 6)
+      .slice(0, 10)
       .map((item) => ({
         id: toIpoAlertId(item.source, item.url),
         headline: item.headline,
@@ -474,8 +485,16 @@ export function ProDeskTerminalPage() {
         source: item.source,
         url: item.url,
         publishedDate: item.publishedDate,
+        actionable: isActionableIpoHeadline(item.headline),
       }));
   }, [news?.items]);
+
+  const ipoAlerts = useMemo(() => ipoMentions.filter((item) => item.actionable).slice(0, 6), [ipoMentions]);
+
+  const ipoInfoMentions = useMemo(
+    () => ipoMentions.filter((item) => !item.actionable).slice(0, 4),
+    [ipoMentions],
+  );
 
   const pendingIpoCount = useMemo(() => {
     return ipoAlerts.filter((item) => !appliedIpoMap[item.id]).length;
@@ -687,20 +706,24 @@ export function ProDeskTerminalPage() {
         </p>
       </header>
 
-      {ipoAlerts.length ? (
-        <section className="terminal-card overflow-hidden border-cyan-500/30 p-4 sm:p-5">
-          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_14%_14%,rgba(34,211,238,0.2),transparent_36%),radial-gradient(circle_at_84%_14%,rgba(239,68,68,0.17),transparent_32%)]" />
-          <div className="relative flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-cyan-300">IPO Notify Center</p>
-              <p className="mt-1 text-sm text-zinc-200">
-                {pendingIpoCount > 0
+      <section className="terminal-card overflow-hidden border-cyan-500/30 p-4 sm:p-5">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_14%_14%,rgba(34,211,238,0.2),transparent_36%),radial-gradient(circle_at_84%_14%,rgba(239,68,68,0.17),transparent_32%)]" />
+        <div className="relative flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] text-cyan-300">IPO Notify Center</p>
+            <p className="mt-1 text-sm text-zinc-200">
+              {ipoAlerts.length
+                ? pendingIpoCount > 0
                   ? `${pendingIpoCount} IPO notifications need action right now.`
-                  : 'All IPO notifications are marked as applied.'}
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {pendingIpoCount > 0 ? (
+                  : 'All actionable IPO notifications are marked as applied.'
+                : ipoInfoMentions.length
+                  ? 'IPO-related headlines found, but no currently actionable apply window.'
+                  : 'No IPO mentions in recent feed yet. This panel updates automatically.'}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {ipoAlerts.length ? (
+              pendingIpoCount > 0 ? (
                 <span className="animate-pulse rounded-md border border-terminal-red/70 bg-terminal-red/20 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-terminal-red">
                   IPO Bell Active
                 </span>
@@ -708,14 +731,18 @@ export function ProDeskTerminalPage() {
                 <span className="rounded-md border border-terminal-green/70 bg-terminal-green/15 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-terminal-green">
                   IPO Clear
                 </span>
-              )}
-              <a href="#ipo-alerts" className="terminal-btn text-xs">
-                Open IPO Notify
-              </a>
-            </div>
+              )
+            ) : (
+              <span className="rounded-md border border-zinc-700/80 bg-zinc-900/75 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-zinc-300">
+                IPO Feed Watching
+              </span>
+            )}
+            <a href="#ipo-alerts" className="terminal-btn text-xs">
+              Open IPO Notify
+            </a>
           </div>
-        </section>
-      ) : null}
+        </div>
+      </section>
 
       <section className="terminal-card overflow-hidden">
         <div className="relative">
@@ -806,8 +833,7 @@ export function ProDeskTerminalPage() {
         </article>
       </section>
 
-      {ipoAlerts.length ? (
-        <section id="ipo-alerts" className="terminal-card p-4 sm:p-5">
+      <section id="ipo-alerts" className="terminal-card p-4 sm:p-5">
           <header className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">IPO Auto Alerts</p>
@@ -831,64 +857,89 @@ export function ProDeskTerminalPage() {
           {ipoSyncNotice ? <p className="mt-3 text-xs text-terminal-amber">{ipoSyncNotice}</p> : null}
 
           <div className="mt-4 space-y-2">
-            {ipoAlerts.map((item) => {
-              const isApplied = !!appliedIpoMap[item.id];
+            {ipoAlerts.length ? (
+              ipoAlerts.map((item) => {
+                const isApplied = !!appliedIpoMap[item.id];
 
-              return (
-                <article
-                  key={item.id}
-                  className={`rounded-lg border p-3 ${
-                    isApplied
-                      ? 'border-zinc-800 bg-zinc-950/70'
-                      : 'border-terminal-red/70 bg-terminal-red/10'
-                  }`}
-                >
+                return (
+                  <article
+                    key={item.id}
+                    className={`rounded-lg border p-3 ${
+                      isApplied
+                        ? 'border-zinc-800 bg-zinc-950/70'
+                        : 'border-terminal-red/70 bg-terminal-red/10'
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                      <span className="uppercase tracking-wide text-zinc-500">{item.source}</span>
+                      <span className="text-zinc-600">{formatRelativeAge(item.publishedDate)}</span>
+                      {isApplied ? (
+                        <span className="rounded-md border border-terminal-green/70 bg-terminal-green/15 px-2 py-1 font-semibold uppercase tracking-wide text-terminal-green">
+                          Applied
+                        </span>
+                      ) : (
+                        <span className="animate-pulse rounded-md border border-terminal-red/70 bg-terminal-red/20 px-2 py-1 font-semibold uppercase tracking-wide text-terminal-red">
+                          Blink: Apply Pending
+                        </span>
+                      )}
+                    </div>
+
+                    <p className="mt-2 text-sm font-semibold text-zinc-100">{item.headline}</p>
+                    <p className="mt-1 text-xs leading-relaxed text-zinc-400">{item.summary}</p>
+
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <a href={item.url} target="_blank" rel="noreferrer" className="terminal-btn text-xs">
+                        Open Source
+                      </a>
+
+                      {isApplied ? (
+                        <button
+                          type="button"
+                          onClick={() => void markIpoPending(item.id)}
+                          className="terminal-btn text-xs"
+                        >
+                          Mark Pending
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => void markIpoApplied(item.id)}
+                          className="terminal-btn text-xs"
+                        >
+                          I Applied IPO
+                        </button>
+                      )}
+                    </div>
+                  </article>
+                );
+              })
+            ) : ipoInfoMentions.length ? (
+              ipoInfoMentions.map((item) => (
+                <article key={item.id} className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
                   <div className="flex flex-wrap items-center gap-2 text-[11px]">
                     <span className="uppercase tracking-wide text-zinc-500">{item.source}</span>
                     <span className="text-zinc-600">{formatRelativeAge(item.publishedDate)}</span>
-                    {isApplied ? (
-                      <span className="rounded-md border border-terminal-green/70 bg-terminal-green/15 px-2 py-1 font-semibold uppercase tracking-wide text-terminal-green">
-                        Applied
-                      </span>
-                    ) : (
-                      <span className="animate-pulse rounded-md border border-terminal-red/70 bg-terminal-red/20 px-2 py-1 font-semibold uppercase tracking-wide text-terminal-red">
-                        Blink: Apply Pending
-                      </span>
-                    )}
+                    <span className="rounded-md border border-zinc-700/80 bg-zinc-900/75 px-2 py-1 font-semibold uppercase tracking-wide text-zinc-300">
+                      Info Only
+                    </span>
                   </div>
-
                   <p className="mt-2 text-sm font-semibold text-zinc-100">{item.headline}</p>
                   <p className="mt-1 text-xs leading-relaxed text-zinc-400">{item.summary}</p>
-
-                  <div className="mt-3 flex flex-wrap gap-2">
+                  <div className="mt-3 flex justify-end">
                     <a href={item.url} target="_blank" rel="noreferrer" className="terminal-btn text-xs">
                       Open Source
                     </a>
-
-                    {isApplied ? (
-                      <button
-                        type="button"
-                        onClick={() => void markIpoPending(item.id)}
-                        className="terminal-btn text-xs"
-                      >
-                        Mark Pending
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => void markIpoApplied(item.id)}
-                        className="terminal-btn text-xs"
-                      >
-                        I Applied IPO
-                      </button>
-                    )}
                   </div>
                 </article>
-              );
-            })}
+              ))
+            ) : (
+              <div className="empty-state">
+                <p className="empty-state-title">No IPO alert in current feed.</p>
+                <p className="empty-state-hint">This section stays visible and will populate automatically when IPO headlines appear.</p>
+              </div>
+            )}
           </div>
-        </section>
-      ) : null}
+      </section>
 
       <section className="terminal-card p-4 sm:p-5">
         <header className="flex flex-wrap items-center justify-between gap-2">
