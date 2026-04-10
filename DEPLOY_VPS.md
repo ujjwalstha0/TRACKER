@@ -42,12 +42,17 @@ This stack is isolated from your old project using different container names, in
 ## 5.2) Check auto backfill status
 - `curl -fsS http://127.0.0.1:8087/api/ohlc/backfill/status`
 - `docker compose --project-name nepse_tracker --env-file .env -f docker-compose.prod.yml logs --tail=200 tracker-backend | grep -i "automatic OHLC backfill\|Started automatic OHLC backfill"`
+- Note: `IDLE` right after restart is normal until startup delay elapses (`OHLC_AUTO_BACKFILL_STARTUP_DELAY_MS`, default 90s).
 
 ## 5.3) Add watchdog (recommended)
 - Make script executable:
   - `chmod +x scripts/vps-backfill-watchdog.sh`
 - Run once manually:
   - `APP_PORT=8087 MAX_COMPLETED_AGE_HOURS=30 ./scripts/vps-backfill-watchdog.sh`
+- Watchdog behavior:
+  - If status is `IDLE` or stale `COMPLETED`, it auto-starts incremental backfill.
+  - If status is `RUNNING`, it exits healthy.
+  - If status is `FAILED`, it exits with non-zero.
 - Add cron (every 2 hours):
   - `crontab -e`
   - Add line:
