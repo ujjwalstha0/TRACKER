@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   calculateNepseCost,
   createExecutionDecision,
@@ -110,6 +111,12 @@ const INITIAL_DECISION_DRAFT: DecisionDraft = {
   confidence: '3',
 };
 
+const RISK_PRESETS: Array<{ label: string; value: string; hint: string }> = [
+  { label: 'Conservative', value: '0.8', hint: 'Capital-first mode' },
+  { label: 'Balanced', value: '1.0', hint: 'Default NEPSE swing risk' },
+  { label: 'Focused', value: '1.3', hint: 'High-conviction setup only' },
+];
+
 const INITIAL_FORM: FormState = {
   side: 'buy',
   symbol: '',
@@ -148,8 +155,15 @@ function explainCharge(charge: string): string {
   return 'exchange/broker rule-based charge';
 }
 
+function readinessBadgeClass(label: 'READY' | 'CONDITIONAL' | 'WAIT'): string {
+  if (label === 'READY') return 'border-terminal-green/70 bg-terminal-green/15 text-terminal-green';
+  if (label === 'CONDITIONAL') return 'border-terminal-amber/70 bg-terminal-amber/15 text-terminal-amber';
+  return 'border-terminal-red/70 bg-terminal-red/15 text-terminal-red';
+}
+
 export function CalculatorTerminalPage() {
   const hasAuth = Boolean(getAuthToken());
+  const [searchParams, setSearchParams] = useSearchParams();
   const [form, setForm] = useState<FormState>(INITIAL_FORM);
   const [watchlist, setWatchlist] = useState<WatchlistApiRow[]>([]);
   const [result, setResult] = useState<NepseCostResponse | null>(null);
@@ -216,6 +230,38 @@ export function CalculatorTerminalPage() {
       };
     });
   };
+
+  useEffect(() => {
+    const symbolParam = searchParams.get('symbol')?.trim().toUpperCase();
+    const sideParam = searchParams.get('side')?.trim().toLowerCase();
+    const hasValidSide = sideParam === 'buy' || sideParam === 'sell';
+
+    if (!symbolParam && !hasValidSide) {
+      return;
+    }
+
+    const selected = symbolParam
+      ? watchlist.find(
+          (item) => item.symbol.toLowerCase() === symbolParam.toLowerCase() || (item.company ?? '').toLowerCase() === symbolParam.toLowerCase(),
+        )
+      : undefined;
+
+    setForm((previous) => ({
+      ...previous,
+      side: hasValidSide ? (sideParam as Side) : previous.side,
+      symbol: symbolParam ?? previous.symbol,
+      price: selected ? String(selected.ltp) : previous.price,
+      buyPrice: selected && !previous.buyPrice ? String(selected.ltp) : previous.buyPrice,
+    }));
+
+    setDecisionDraft((previous) => ({
+      ...previous,
+      side: hasValidSide ? ((sideParam === 'buy' ? 'BUY' : 'SELL') as ExecutionDecisionSide) : previous.side,
+      symbol: symbolParam ?? previous.symbol,
+    }));
+
+    setSearchParams({}, { replace: true });
+  }, [searchParams, setSearchParams, watchlist]);
 
   const summary = useMemo(() => {
     if (!result) return null;
@@ -329,6 +375,73 @@ export function CalculatorTerminalPage() {
       latest: [...todayEntries].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 8),
     };
   }, [decisionEntries]);
+
+  const readiness = useMemo(() => {
+    const checklistScore = (checklistCompleted / CHECKLIST_ITEMS.length) * 100;
+
+    const riskScore = !riskSummary
+      ? 36
+      : riskSummary.warning
+        ? 20
+        : Math.max(
+            0,
+            Math.min(
+              100,
+              62 + (riskSummary.riskRewardRatio ?? 1.4) * 12 - Math.max(0, riskSummary.capitalUsagePct - 78) * 0.55,
+            ),
+          );
+
+    const scenarioScore =
+      scenario && scenario.targetPnl !== null && scenario.stopPnl !== null
+        ? scenario.targetPnl > 0 && scenario.stopPnl < 0
+          ? 86
+          : 56
+        : 60;
+
+    const score = Math.round(checklistScore * 0.42 + riskScore * 0.38 + scenarioScore * 0.2);
+
+    if (score >= 80 && checklistCompleted === CHECKLIST_ITEMS.length && !riskSummary?.warning) {
+      return {
+        score,
+        label: 'READY' as const,
+        guidance: 'Setup quality is strong. Execute only if live price respects your entry zone.',
+      };
+    }
+
+    if (score >= 64) {
+      return {
+        score,
+        label: 'CONDITIONAL' as const,
+        guidance: 'Decent setup, but tighten risk or wait for one more confirmation candle.',
+      };
+    }
+
+    return {
+      score,
+      label: 'WAIT' as const,
+      guidance: 'Do not force entries. Improve checklist alignment and reduce uncertainty first.',
+    };
+  }, [checklistCompleted, riskSummary, scenario]);
+
+  const autoDraftFromReadiness = () => {
+    const checkedItems = CHECKLIST_ITEMS
+      .filter((item) => checklist[item.key])
+      .map((item) => item.label)
+      .slice(0, 3)
+      .join('; ');
+
+    setDecisionDraft((previous) => ({
+      ...previous,
+      side: form.side === 'buy' ? 'BUY' : 'SELL',
+      symbol: form.symbol || previous.symbol,
+      reason:
+        previous.reason ||
+        `${readiness.label} setup. ${readiness.guidance}`,
+      plan:
+        previous.plan ||
+        `${form.side === 'buy' ? 'Entry' : 'Exit'} ${form.price || '-'} | Stop ${form.stopLoss || '-'} | Target ${form.targetPrice || '-'} | Checks: ${checkedItems || 'Checklist pending'}`,
+    }));
+  };
 
   const syncDraftFromCalculator = () => {
     setDecisionDraft((previous) => ({
@@ -951,6 +1064,18 @@ export function CalculatorTerminalPage() {
             >
               Sync From Calculator Inputs
             </button>
+
+            {RISK_PRESETS.map((preset) => (
+              <button
+                key={preset.label}
+                type="button"
+                onClick={() => setRiskPlan((old) => ({ ...old, riskPercent: preset.value }))}
+                className="terminal-btn text-xs"
+                title={preset.hint}
+              >
+                {preset.label} {preset.value}%
+              </button>
+            ))}
           </div>
 
           {riskSummary ? (
@@ -1004,6 +1129,17 @@ export function CalculatorTerminalPage() {
             <p className="mt-1 text-xs text-zinc-500">
               Trade only when your process is complete and aligned with your risk plan.
             </p>
+          </div>
+
+          <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs uppercase tracking-wide text-zinc-500">Execution Readiness</p>
+              <span className={`rounded-md border px-2 py-1 text-[10px] font-semibold tracking-wide ${readinessBadgeClass(readiness.label)}`}>
+                {readiness.label}
+              </span>
+            </div>
+            <p className="mt-2 font-mono text-2xl text-white">{readiness.score}/100</p>
+            <p className="mt-1 text-xs text-zinc-400">{readiness.guidance}</p>
           </div>
         </article>
       </section>
@@ -1087,6 +1223,9 @@ export function CalculatorTerminalPage() {
             <div className="flex flex-wrap items-end gap-2">
               <button type="button" onClick={syncDraftFromCalculator} className="terminal-btn">
                 Sync From Calculator
+              </button>
+              <button type="button" onClick={autoDraftFromReadiness} className="terminal-btn">
+                Auto Draft From Setup
               </button>
               <button type="button" onClick={addDecisionEntry} className="terminal-btn-primary" disabled={decisionLoading || !hasAuth}>
                 {decisionLoading ? 'Saving...' : 'Save Note'}

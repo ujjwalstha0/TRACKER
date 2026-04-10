@@ -165,6 +165,12 @@ function formatAsOf(iso: string | null): string {
   return parsed.toLocaleString();
 }
 
+function operatingModeClass(mode: 'ACTIVE' | 'SELECTIVE' | 'DEFENSIVE'): string {
+  if (mode === 'ACTIVE') return 'border-terminal-green/70 bg-terminal-green/15 text-terminal-green';
+  if (mode === 'SELECTIVE') return 'border-terminal-amber/70 bg-terminal-amber/15 text-terminal-amber';
+  return 'border-terminal-red/70 bg-terminal-red/15 text-terminal-red';
+}
+
 export function ProDeskTerminalPage() {
   const [indices, setIndices] = useState<IndexApiRow[]>([]);
   const [watchlist, setWatchlist] = useState<WatchlistApiRow[]>([]);
@@ -271,6 +277,36 @@ export function ProDeskTerminalPage() {
   );
 
   const notebookSummary = notebook?.summary;
+
+  const operatingPlan = useMemo(() => {
+    if (deskScore.score >= 82 && regime.label === 'RISK_ON' && highImpactCount <= 1) {
+      return {
+        mode: 'ACTIVE' as const,
+        riskPerTradePct: '1.3% - 1.8%',
+        maxNewPositions: '2 to 3 quality setups',
+        focus: 'Trend-following candidates with high notebook quality and strong turnover.',
+        avoid: 'Overleveraging in symbols with weak liquidity depth.',
+      };
+    }
+
+    if (deskScore.score >= 70) {
+      return {
+        mode: 'SELECTIVE' as const,
+        riskPerTradePct: '0.9% - 1.2%',
+        maxNewPositions: '1 to 2 best setups',
+        focus: 'Only entries where checklist is complete and risk-reward remains above 2R.',
+        avoid: 'Late entries after extended candles or impulsive averaging.',
+      };
+    }
+
+    return {
+      mode: 'DEFENSIVE' as const,
+      riskPerTradePct: '0.4% - 0.8%',
+      maxNewPositions: '0 to 1 small probe',
+      focus: 'Capital protection, review journal, and preparation for cleaner sessions.',
+      avoid: 'Frequent flip trades in noisy conditions and macro headline spikes.',
+    };
+  }, [deskScore.score, highImpactCount, regime.label]);
 
   const moduleLinks = [
     {
@@ -394,6 +430,29 @@ export function ProDeskTerminalPage() {
         </article>
       </section>
 
+      <section className="terminal-card p-4 sm:p-5">
+        <header className="flex flex-wrap items-center gap-2">
+          <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">Trading Session Plan</p>
+          <span className={`rounded-md border px-2 py-1 text-[11px] font-semibold tracking-wide ${operatingModeClass(operatingPlan.mode)}`}>
+            {operatingPlan.mode}
+          </span>
+        </header>
+
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+            <p className="text-xs uppercase tracking-wide text-zinc-500">Risk Allocation</p>
+            <p className="mt-2 text-sm text-zinc-300">Risk per trade: <span className="font-mono text-zinc-100">{operatingPlan.riskPerTradePct}</span></p>
+            <p className="mt-1 text-sm text-zinc-300">New positions: <span className="font-mono text-zinc-100">{operatingPlan.maxNewPositions}</span></p>
+          </div>
+
+          <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-3">
+            <p className="text-xs uppercase tracking-wide text-zinc-500">Execution Priority</p>
+            <p className="mt-2 text-sm text-zinc-300">Focus: {operatingPlan.focus}</p>
+            <p className="mt-1 text-sm text-zinc-500">Avoid: {operatingPlan.avoid}</p>
+          </div>
+        </div>
+      </section>
+
       <section className="grid gap-5 xl:grid-cols-2">
         <article className="terminal-card p-4 sm:p-5">
           <header className="flex items-center justify-between gap-2">
@@ -428,6 +487,18 @@ export function ProDeskTerminalPage() {
                       ? 'Build position only if checklist is fully aligned.'
                       : 'Use as exit/reduce signal for existing holdings in NEPSE cash market.'}
                   </p>
+
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <Link
+                      to={`/execution?symbol=${encodeURIComponent(entry.symbol)}&side=${entry.signal === 'BUY' ? 'buy' : 'sell'}`}
+                      className="terminal-btn text-xs"
+                    >
+                      Plan in Execution
+                    </Link>
+                    <Link to={`/chart-desk/${encodeURIComponent(entry.symbol)}`} className="terminal-btn text-xs">
+                      Open Chart
+                    </Link>
+                  </div>
                 </div>
               ))
             ) : (
